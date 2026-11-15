@@ -80,4 +80,5 @@ const RECORDS = [
   },
 ];
 
+if (typeof window !== "undefined") window.RECORDS = RECORDS;
 if (typeof module !== "undefined") module.exports = RECORDS;
