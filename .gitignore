@@ -1,5 +1,33 @@
+# Large Media & Extraction Artifacts
 data/videos/
 data/frames/
 data/features/crop_check/
+
+# Local Sound Engine Build / Render Outputs
+out/
+**/out/
+
+# Python Cache & Bytecode
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+
+# Environments
+.venv/
+venv/
+ENV/
+env/
+
+# OS Generated Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE & Editor Settings
+.vscode/
+.idea/
+
+# Logs
+*.log
+
