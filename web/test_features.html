@@ -14,20 +14,44 @@
     canvas { display: block; margin: 1rem 0; border: 1px solid #ccc; }
     pre { background: #f5f5f5; padding: 1rem; overflow-x: auto; font-size: 0.85rem; }
     #progress { margin: 0.5rem 0; }
+    button { transition: all 0.2s; }
+    button:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.2); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
   </style>
 </head>
 <body>
   <h1>🌍 Feature Extractor Test</h1>
   <p>Drop a video file to extract features frame-by-frame.</p>
+  <p style="font-size: 0.9rem; color: #666;">
+    <strong>Supported formats:</strong> MP4, WebM, MOV, AVI (browser-dependent)<br>
+    <strong>Note:</strong> Make sure you're running this on a local server (e.g., <code>python -m http.server</code>)
+  </p>
 
   <div id="dropZone">
     <p>📂 Drag & drop a video here, or click to browse</p>
     <input type="file" id="fileInput" accept="video/*" hidden>
   </div>
 
-  <div id="progress"></div>
+  <div id="progress" style="font-weight: 600; color: #2196F3;"></div>
   <video id="video" muted hidden></video>
   <canvas id="canvas"></canvas>
+  
+  <!-- Audio Generation Section -->
+  <div id="audioSection" style="display: none; margin: 2rem 0; padding: 1.5rem; background: #e8f5e9; border-radius: 8px; border: 2px solid #4caf50;">
+    <h3 style="margin-top: 0; color: #2e7d32;">🎵 Generate Audio</h3>
+    <p style="margin-bottom: 1rem;">Features extracted successfully! Generate audio from this data:</p>
+    <button id="generateBtn" style="padding: 12px 24px; font-size: 1rem; font-weight: 600; background: #4caf50; color: white; border: none; border-radius: 6px; cursor: pointer; margin-right: 10px;">
+      ▶ Generate & Play Audio
+    </button>
+    <button id="stopBtn" style="padding: 12px 24px; font-size: 1rem; font-weight: 600; background: #f44336; color: white; border: none; border-radius: 6px; cursor: pointer; display: none;">
+      ■ Stop Audio
+    </button>
+    <button id="downloadBtn" style="padding: 12px 24px; font-size: 1rem; font-weight: 600; background: #2196F3; color: white; border: none; border-radius: 6px; cursor: pointer; margin-left: 10px;">
+      💾 Download JSON
+    </button>
+    <div id="playbackStatus" style="margin-top: 1rem; padding: 10px; background: white; border-radius: 4px; font-family: monospace;"></div>
+  </div>
+  
   <h3>Features (first frame):</h3>
   <pre id="output">Waiting for video…</pre>
   <h3>All frames summary:</h3>
@@ -35,6 +59,10 @@
 
   <script type="module">
     import { extractFeatures, extractAllFrames, N_STRIPS } from './features.js';
+    import { initAudio, playFrame, stopAll } from './synth.js';
+
+    console.log('🌍 Earth Jukebox Feature Extractor loaded');
+    console.log('Modules imported successfully');
 
     const dropZone  = document.getElementById('dropZone');
     const fileInput = document.getElementById('fileInput');
@@ -43,28 +71,78 @@
     const output    = document.getElementById('output');
     const summary   = document.getElementById('summary');
     const progress  = document.getElementById('progress');
+    
+    // Audio generation elements
+    const audioSection = document.getElementById('audioSection');
+    const generateBtn = document.getElementById('generateBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const playbackStatus = document.getElementById('playbackStatus');
+    
+    console.log('DOM elements initialized');
+    
+    let extractedFrames = null;
+    let isPlaying = false;
+    let playbackInterval = null;
+    let currentFrame = 0;
 
     // ── drag & drop ──
-    dropZone.addEventListener('click', () => fileInput.click());
-    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('over'); });
-    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
+    dropZone.addEventListener('click', () => {
+      console.log('Drop zone clicked, opening file dialog...');
+      fileInput.click();
+    });
+    dropZone.addEventListener('dragover', e => { 
+      e.preventDefault(); 
+      console.log('Drag over');
+      dropZone.classList.add('over'); 
+    });
+    dropZone.addEventListener('dragleave', () => {
+      console.log('Drag leave');
+      dropZone.classList.remove('over');
+    });
     dropZone.addEventListener('drop', e => {
       e.preventDefault();
+      console.log('File dropped:', e.dataTransfer.files);
       dropZone.classList.remove('over');
-      if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+      if (e.dataTransfer.files.length) {
+        progress.textContent = `Dropped: ${e.dataTransfer.files[0].name}`;
+        handleFile(e.dataTransfer.files[0]);
+      }
     });
-    fileInput.addEventListener('change', () => {
-      if (fileInput.files.length) handleFile(fileInput.files[0]);
+    fileInput.addEventListener('change', (e) => {
+      console.log('File input changed:', fileInput.files);
+      if (fileInput.files.length) {
+        progress.textContent = `Selected: ${fileInput.files[0].name}`;
+        handleFile(fileInput.files[0]);
+      }
     });
 
     async function handleFile(file) {
-      output.textContent = 'Loading video…';
-      summary.textContent = '';
-      video.src = URL.createObjectURL(file);
+      try {
+        console.log('File selected:', file.name, file.type, file.size);
+        output.textContent = 'Loading video…';
+        summary.textContent = '';
+        audioSection.style.display = 'none'; // Hide audio section from previous runs
+        
+        // Validate file type
+        if (!file.type.startsWith('video/')) {
+          throw new Error('Please select a video file');
+        }
+        
+        video.src = URL.createObjectURL(file);
+        console.log('Video source set, waiting for metadata...');
 
-      await new Promise(resolve => {
-        video.onloadedmetadata = resolve;
-      });
+        await new Promise((resolve, reject) => {
+          video.onloadedmetadata = () => {
+            console.log('Video metadata loaded:', video.videoWidth, 'x', video.videoHeight, video.duration + 's');
+            resolve();
+          };
+          video.onerror = () => {
+            reject(new Error('Failed to load video. Format may not be supported.'));
+          };
+          // Timeout after 10 seconds
+          setTimeout(() => reject(new Error('Video loading timeout')), 10000);
+        });
 
       // downscale to 640 wide, keep aspect ratio
       const scale = 640 / video.videoWidth;
@@ -73,35 +151,131 @@
       canvas.width = w;
       canvas.height = h;
 
-      progress.textContent = `Video: ${video.videoWidth}×${video.videoHeight}, ` +
-        `${video.duration.toFixed(1)}s — analysing at ${w}×${h}…`;
+        progress.textContent = `Video: ${video.videoWidth}×${video.videoHeight}, ` +
+          `${video.duration.toFixed(1)}s — analysing at ${w}×${h}…`;
+        console.log('Starting frame extraction...');
 
-      const frames = await extractAllFrames(video, canvas, 1, frac => {
-        progress.textContent = `Extracting… ${(frac * 100).toFixed(0)}%`;
-      });
+        const frames = await extractAllFrames(video, canvas, 1, frac => {
+          progress.textContent = `Extracting… ${(frac * 100).toFixed(0)}%`;
+        });
 
-      progress.textContent = `Done! ${frames.length} frames extracted.`;
+        console.log('Extraction complete:', frames.length, 'frames');
+        progress.textContent = `Done! ${frames.length} frames extracted.`;
+        
+        // Store frames for audio generation
+        extractedFrames = frames;
 
-      // show first frame features
-      if (frames.length > 0) {
-        output.textContent = JSON.stringify(frames[0], null, 2);
+        // show first frame features
+        if (frames.length > 0) {
+          output.textContent = JSON.stringify(frames[0], null, 2);
+        }
+
+        // show summary: min / mean / max of scalars
+        const keys = ['brightness', 'hue', 'saturation', 'edges', 'motion'];
+        let lines = `${'feature'.padEnd(14)} ${'min'.padStart(8)} ${'mean'.padStart(8)} ${'max'.padStart(8)}\n`;
+        lines += '-'.repeat(42) + '\n';
+        for (const k of keys) {
+          const vals = frames.map(f => f[k]);
+          const lo = Math.min(...vals);
+          const hi = Math.max(...vals);
+          const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+          lines += `${k.padEnd(14)} ${lo.toFixed(3).padStart(8)} ${avg.toFixed(3).padStart(8)} ${hi.toFixed(3).padStart(8)}\n`;
+        }
+        lines += `\ncolumns length: ${frames[0].columns.length} (expected ${N_STRIPS})\n`;
+        lines += `column_heights length: ${frames[0].column_heights.length}\n`;
+        lines += `column_hues length: ${frames[0].column_hues.length}\n`;
+        summary.textContent = lines;
+        
+        // Show audio generation section
+        audioSection.style.display = 'block';
+        playbackStatus.textContent = `Ready to generate audio from ${frames.length} frames`;
+        
+      } catch (err) {
+        console.error('Error processing video:', err);
+        progress.textContent = `❌ Error: ${err.message}`;
+        output.textContent = `Error details:\n${err.stack || err.message}`;
+        summary.textContent = 'Processing failed. Check console for details (F12).';
       }
-
-      // show summary: min / mean / max of scalars
-      const keys = ['brightness', 'hue', 'saturation', 'edges', 'motion'];
-      let lines = `${'feature'.padEnd(14)} ${'min'.padStart(8)} ${'mean'.padStart(8)} ${'max'.padStart(8)}\n`;
-      lines += '-'.repeat(42) + '\n';
-      for (const k of keys) {
-        const vals = frames.map(f => f[k]);
-        const lo = Math.min(...vals);
-        const hi = Math.max(...vals);
-        const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
-        lines += `${k.padEnd(14)} ${lo.toFixed(3).padStart(8)} ${avg.toFixed(3).padStart(8)} ${hi.toFixed(3).padStart(8)}\n`;
+    }
+    
+    // ── Audio Generation ──
+    generateBtn.addEventListener('click', () => {
+      if (!extractedFrames || extractedFrames.length === 0) {
+        playbackStatus.textContent = 'Error: No frames extracted yet';
+        return;
       }
-      lines += `\ncolumns length: ${frames[0].columns.length} (expected ${N_STRIPS})\n`;
-      lines += `column_heights length: ${frames[0].column_heights.length}\n`;
-      lines += `column_hues length: ${frames[0].column_hues.length}\n`;
-      summary.textContent = lines;
+      
+      // Initialize audio context (required for browser autoplay policy)
+      initAudio();
+      
+      isPlaying = true;
+      currentFrame = 0;
+      generateBtn.disabled = true;
+      stopBtn.style.display = 'inline-block';
+      
+      playbackStatus.textContent = `Playing frame 1 / ${extractedFrames.length}`;
+      
+      // Play first frame immediately
+      playAudioFrame();
+      
+      // Continue playing remaining frames at 1 frame per second
+      playbackInterval = setInterval(() => {
+        if (currentFrame >= extractedFrames.length) {
+          // Finished playing all frames
+          stopAudioPlayback();
+          playbackStatus.textContent = `Playback complete! Played ${extractedFrames.length} frames`;
+          return;
+        }
+        playAudioFrame();
+      }, 1000);
+    });
+    
+    stopBtn.addEventListener('click', () => {
+      stopAudioPlayback();
+      playbackStatus.textContent = `Stopped at frame ${currentFrame} / ${extractedFrames.length}`;
+    });
+    
+    downloadBtn.addEventListener('click', () => {
+      if (!extractedFrames || extractedFrames.length === 0) {
+        playbackStatus.textContent = 'Error: No frames to download';
+        return;
+      }
+      
+      // Create JSON in the same format as the Python pipeline output
+      const jsonData = {
+        record: 'user_video',
+        fps: 1,
+        n_strips: extractedFrames[0].columns.length,
+        frames: extractedFrames
+      };
+      
+      const blob = new Blob([JSON.stringify(jsonData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `features_${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      
+      playbackStatus.textContent = `Downloaded features JSON with ${extractedFrames.length} frames`;
+    });
+    
+    function playAudioFrame() {
+      if (!extractedFrames || currentFrame >= extractedFrames.length) return;
+      
+      const frame = extractedFrames[currentFrame];
+      playFrame(frame, currentFrame, extractedFrames.length);
+      
+      currentFrame++;
+      playbackStatus.textContent = `Playing frame ${currentFrame} / ${extractedFrames.length}`;
+    }
+    
+    function stopAudioPlayback() {
+      isPlaying = false;
+      stopAll();
+      clearInterval(playbackInterval);
+      generateBtn.disabled = false;
+      stopBtn.style.display = 'none';
     }
   </script>
 </body>

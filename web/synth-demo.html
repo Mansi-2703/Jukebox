@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Earth Jukebox Synth Demo</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+      color: #fff;
+      padding: 20px;
+      min-height: 100vh;
+    }
+    
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background: rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(10px);
+      border-radius: 16px;
+      padding: 30px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    }
+    
+    h1 {
+      font-size: 2rem;
+      margin-bottom: 8px;
+      text-align: center;
+    }
+    
+    .subtitle {
+      text-align: center;
+      opacity: 0.8;
+      margin-bottom: 30px;
+      font-size: 0.9rem;
+    }
+    
+    .section {
+      margin-bottom: 24px;
+      padding: 20px;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 12px;
+    }
+    
+    .section h2 {
+      font-size: 1.2rem;
+      margin-bottom: 16px;
+      color: #a8d5ff;
+    }
+    
+    .file-input-wrapper {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+    
+    input[type="file"] {
+      flex: 1;
+      padding: 10px;
+      border: 2px dashed rgba(255, 255, 255, 0.3);
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.2);
+      color: #fff;
+      cursor: pointer;
+    }
+    
+    input[type="file"]::file-selector-button {
+      padding: 8px 16px;
+      border: none;
+      background: rgba(255, 255, 255, 0.2);
+      color: #fff;
+      border-radius: 6px;
+      cursor: pointer;
+      margin-right: 12px;
+    }
+    
+    input[type="file"]::file-selector-button:hover {
+      background: rgba(255, 255, 255, 0.3);
+    }
+    
+    .controls {
+      display: flex;
+      gap: 12px;
+      margin-top: 16px;
+    }
+    
+    button {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    button.primary {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+      flex: 1;
+    }
+    
+    button.primary:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+    
+    button.secondary {
+      background: rgba(255, 255, 255, 0.2);
+      color: #fff;
+      flex: 1;
+    }
+    
+    button.secondary:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.3);
+    }
+    
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    
+    .status {
+      padding: 12px;
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 8px;
+      font-family: 'Courier New', monospace;
+      font-size: 0.9rem;
+      margin-top: 16px;
+    }
+    
+    .status-label {
+      color: #a8d5ff;
+      font-weight: 600;
+    }
+    
+    .options-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+    }
+    
+    .option {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    
+    .option label {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #a8d5ff;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    select, input[type="range"] {
+      padding: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 6px;
+      background: rgba(0, 0, 0, 0.3);
+      color: #fff;
+      font-size: 0.9rem;
+    }
+    
+    select {
+      cursor: pointer;
+    }
+    
+    input[type="range"] {
+      padding: 0;
+      height: 6px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: rgba(255, 255, 255, 0.2);
+    }
+    
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #667eea;
+      cursor: pointer;
+    }
+    
+    input[type="range"]::-moz-range-thumb {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #667eea;
+      cursor: pointer;
+      border: none;
+    }
+    
+    .slider-value {
+      display: inline-block;
+      min-width: 40px;
+      text-align: right;
+      font-family: 'Courier New', monospace;
+      font-size: 0.85rem;
+      opacity: 0.9;
+    }
+    
+    .strips-display {
+      display: flex;
+      gap: 2px;
+      height: 80px;
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 6px;
+      padding: 8px;
+      align-items: flex-end;
+      margin-top: 12px;
+    }
+    
+    .strip {
+      flex: 1;
+      background: rgba(168, 213, 255, 0.3);
+      border-radius: 2px;
+      transition: all 0.3s;
+      min-width: 3px;
+    }
+    
+    .strip.active {
+      background: linear-gradient(to top, #667eea, #764ba2);
+      box-shadow: 0 0 8px rgba(102, 126, 234, 0.6);
+    }
+    
+    .info-box {
+      background: rgba(102, 126, 234, 0.2);
+      border-left: 4px solid #667eea;
+      padding: 12px 16px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      line-height: 1.5;
+      margin-bottom: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🌍 Earth Jukebox Synth Demo</h1>
+    <div class="subtitle">Real-time audio synthesis from satellite data</div>
+    
+    <div class="info-box">
+      Load a features JSON file from the Earth Jukebox pipeline (e.g., <code>data/features/night_lights.json</code>).
+      The synthesizer will play one frame per second, converting visual features into music.
+    </div>
+    
+    <!-- File Input -->
+    <div class="section">
+      <h2>1. Load Features JSON</h2>
+      <div class="file-input-wrapper">
+        <input type="file" id="fileInput" accept=".json">
+      </div>
+      <div class="status">
+        <span class="status-label">Status:</span> <span id="loadStatus">No file loaded</span>
+      </div>
+    </div>
+    
+    <!-- Playback Controls -->
+    <div class="section">
+      <h2>2. Playback</h2>
+      <div class="controls">
+        <button class="primary" id="playBtn" disabled>▶ Play</button>
+        <button class="secondary" id="stopBtn" disabled>■ Stop</button>
+      </div>
+      <div class="status">
+        <span class="status-label">Frame:</span> <span id="frameDisplay">0 / 0</span>
+      </div>
+      
+      <!-- Strips Visualizer -->
+      <div class="strips-display" id="stripsDisplay"></div>
+    </div>
+    
+    <!-- Options -->
+    <div class="section">
+      <h2>3. Options</h2>
+      <div class="options-grid">
+        <div class="option">
+          <label for="oscType">Oscillator Type</label>
+          <select id="oscType">
+            <option value="triangle">Triangle (warm)</option>
+            <option value="sine">Sine (smooth)</option>
+            <option value="square">Square (sharp)</option>
+            <option value="auto">Auto (from hue)</option>
+          </select>
+        </div>
+        
+        <div class="option">
+          <label for="scale">Scale</label>
+          <select id="scale">
+            <option value="C_major_pentatonic">C Major Pentatonic</option>
+            <option value="C_minor_pentatonic">C Minor Pentatonic</option>
+            <option value="C_major">C Major</option>
+            <option value="C_blues">C Blues</option>
+            <option value="A_minor_pentatonic">A Minor Pentatonic</option>
+          </select>
+        </div>
+        
+        <div class="option">
+          <label for="threshold">Brightness Threshold: <span class="slider-value" id="thresholdValue">0.15</span></label>
+          <input type="range" id="threshold" min="0" max="0.5" step="0.01" value="0.15">
+        </div>
+        
+        <div class="option">
+          <label for="motionGain">Motion Gain: <span class="slider-value" id="motionGainValue">20</span></label>
+          <input type="range" id="motionGain" min="1" max="50" step="1" value="20">
+        </div>
+        
+        <div class="option">
+          <label for="maxVoices">Max Voices: <span class="slider-value" id="maxVoicesValue">4</span></label>
+          <input type="range" id="maxVoices" min="1" max="8" step="1" value="4">
+        </div>
+        
+        <div class="option">
+          <label for="masterVolume">Master Volume: <span class="slider-value" id="masterVolumeValue">0.7</span></label>
+          <input type="range" id="masterVolume" min="0" max="1" step="0.05" value="0.7">
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <script type="module">
+    import { initAudio, playFrame, stopAll, setOptions, getOptions } from './synth.js';
+    
+    let featuresData = null;
+    let currentFrame = 0;
+    let isPlaying = false;
+    let playbackInterval = null;
+    
+    // DOM elements
+    const fileInput = document.getElementById('fileInput');
+    const playBtn = document.getElementById('playBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const loadStatus = document.getElementById('loadStatus');
+    const frameDisplay = document.getElementById('frameDisplay');
+    const stripsDisplay = document.getElementById('stripsDisplay');
+    
+    const oscTypeSelect = document.getElementById('oscType');
+    const scaleSelect = document.getElementById('scale');
+    const thresholdSlider = document.getElementById('threshold');
+    const motionGainSlider = document.getElementById('motionGain');
+    const maxVoicesSlider = document.getElementById('maxVoices');
+    const masterVolumeSlider = document.getElementById('masterVolume');
+    
+    const thresholdValue = document.getElementById('thresholdValue');
+    const motionGainValue = document.getElementById('motionGainValue');
+    const maxVoicesValue = document.getElementById('maxVoicesValue');
+    const masterVolumeValue = document.getElementById('masterVolumeValue');
+    
+    // File loading
+    fileInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      
+      try {
+        const text = await file.text();
+        const data = JSON.parse(text);
+        
+        if (!data.frames || !Array.isArray(data.frames)) {
+          throw new Error('Invalid format: expected "frames" array');
+        }
+        
+        featuresData = data;
+        currentFrame = 0;
+        
+        loadStatus.textContent = `Loaded: ${data.record || 'unknown'} (${data.frames.length} frames, ${data.fps || 1} fps)`;
+        frameDisplay.textContent = `0 / ${data.frames.length}`;
+        playBtn.disabled = false;
+        
+        // Initialize strips display
+        const nStrips = data.frames[0]?.columns?.length || 32;
+        stripsDisplay.innerHTML = '';
+        for (let i = 0; i < nStrips; i++) {
+          const strip = document.createElement('div');
+          strip.className = 'strip';
+          stripsDisplay.appendChild(strip);
+        }
+        
+      } catch (err) {
+        loadStatus.textContent = `Error: ${err.message}`;
+        console.error('Failed to load JSON:', err);
+      }
+    });
+    
+    // Playback control
+    playBtn.addEventListener('click', () => {
+      if (!featuresData) return;
+      
+      // Initialize audio on first click (required for browser autoplay policy)
+      initAudio();
+      
+      isPlaying = true;
+      playBtn.disabled = true;
+      stopBtn.disabled = false;
+      
+      // Start playback loop (1 frame per second)
+      playbackLoop();
+      playbackInterval = setInterval(playbackLoop, 1000);
+    });
+    
+    stopBtn.addEventListener('click', () => {
+      isPlaying = false;
+      stopAll();
+      clearInterval(playbackInterval);
+      playBtn.disabled = false;
+      stopBtn.disabled = true;
+      
+      // Reset strips display
+      document.querySelectorAll('.strip').forEach(s => {
+        s.classList.remove('active');
+        s.style.height = '0%';
+      });
+    });
+    
+    function playbackLoop() {
+      if (!isPlaying || !featuresData) return;
+      
+      const frames = featuresData.frames;
+      if (currentFrame >= frames.length) {
+        // Loop back to start
+        currentFrame = 0;
+      }
+      
+      const frame = frames[currentFrame];
+      frameDisplay.textContent = `${currentFrame + 1} / ${frames.length}`;
+      
+      // Update strips visualizer
+      updateStripsDisplay(frame);
+      
+      // Play the frame
+      playFrame(frame, currentFrame, frames.length);
+      
+      currentFrame++;
+    }
+    
+    function updateStripsDisplay(frame) {
+      const strips = document.querySelectorAll('.strip');
+      const columns = frame.columns || [];
+      const threshold = parseFloat(thresholdSlider.value);
+      
+      strips.forEach((strip, i) => {
+        const brightness = columns[i] || 0;
+        const isActive = brightness >= threshold;
+        
+        strip.classList.toggle('active', isActive);
+        strip.style.height = `${Math.max(5, brightness * 100)}%`;
+      });
+    }
+    
+    // Options control
+    function updateOption(key, value) {
+      setOptions({ [key]: value });
+    }
+    
+    oscTypeSelect.addEventListener('change', (e) => {
+      updateOption('oscillatorType', e.target.value);
+    });
+    
+    scaleSelect.addEventListener('change', (e) => {
+      updateOption('scale', e.target.value);
+    });
+    
+    thresholdSlider.addEventListener('input', (e) => {
+      const val = parseFloat(e.target.value);
+      thresholdValue.textContent = val.toFixed(2);
+      updateOption('brightnessThreshold', val);
+    });
+    
+    motionGainSlider.addEventListener('input', (e) => {
+      const val = parseInt(e.target.value);
+      motionGainValue.textContent = val;
+      updateOption('motionGain', val);
+    });
+    
+    maxVoicesSlider.addEventListener('input', (e) => {
+      const val = parseInt(e.target.value);
+      maxVoicesValue.textContent = val;
+      updateOption('maxVoices', val);
+    });
+    
+    masterVolumeSlider.addEventListener('input', (e) => {
+      const val = parseFloat(e.target.value);
+      masterVolumeValue.textContent = val.toFixed(2);
+      updateOption('masterVolume', val);
+    });
+  </script>
+</body>
+</html>
