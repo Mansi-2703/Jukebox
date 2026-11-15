@@ -1,4 +1,5 @@
 data/videos/
 data/frames/
+data/features/crop_check/
 __pycache__/
 *.pyc
