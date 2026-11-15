@@ -5,7 +5,7 @@ import { extractFeatures } from "./features.js";
 import {
   initAudio, playFrame, stopAll,
   setMasterVolume, setMuted, getAudioContext,
-  getAudioAnalyser,
+  getAudioAnalyser, connectAudioElement,
   setInstrumentPreset, getInstrumentPreset, getAvailableInstruments,
 } from "./synth.js";
 
@@ -22,6 +22,7 @@ const state = {
   prevGray: null,          // Grayscale luma buffer for motion calculation
   lastExtractedSecond: -1, // Throttle to 1 fps frame extraction during video playback
   customViewMode: "overlay", // "overlay" | "video" | "spectrogram"
+  graphMode: "scan",       // "scan" | "fft" | "scope" (C3)
   isPlaying: false,
   isMuted: false,
   isProbeMode: false,
@@ -29,6 +30,9 @@ const state = {
   volumeBeforeMute: 1,
   animFrameId: null,
   needleRafId: null,
+  telemetryRafId: null,    // Live telemetry RAF handle (C5)
+  audioMainConnected: false, // Guard: prevent double-connecting to AnalyserNode
+  audioTvnConnected: false,
   probeAudioCtx: null,     // Web Audio API context for coordinate probing
   probeOscillator: null,
   probeGain: null,
@@ -74,6 +78,31 @@ const footerShortcutsBtn = document.getElementById("footer-shortcuts-btn");
 
 /* Instrument Preset Selector (B2/B3) */
 const instrumentSelect  = document.getElementById("instrument-select");
+
+/* Task C3: Graph tab buttons */
+const tabGraphScan  = document.getElementById("tab-graph-scan");
+const tabGraphFft   = document.getElementById("tab-graph-fft");
+const tabGraphScope = document.getElementById("tab-graph-scope");
+
+/* Task C5: Live Scientific Telemetry HUD elements */
+const telPeak   = document.getElementById("tel-peak");
+const telFreq   = document.getElementById("tel-freq");
+const telLum    = document.getElementById("tel-lum");
+const telSensor = document.getElementById("tel-sensor");
+
+/* Task C2: Dock mode toggle */
+const btnDockMode = document.getElementById("btn-dock-mode");
+
+/* Task C1: Hero BYO Mission Bay */
+const btnByoBrowse   = document.getElementById("btn-byo-browse");
+const byoDropTarget  = document.getElementById("byo-drop-target");
+const chipStatus     = document.getElementById("chip-status");
+const chipRes        = document.getElementById("chip-res");
+const chipFps        = document.getElementById("chip-fps");
+const chipDur        = document.getElementById("chip-dur");
+
+/* Instrument pill buttons (C4) */
+const instPills = document.querySelectorAll(".inst-pill");
 
 /* Bring Your Own Earth custom elements */
 const byoVideo          = document.getElementById("byo-video");
@@ -342,6 +371,244 @@ function drawViz(features) {
 }
 
 /* ════════════════════════════════════════════════════════════
+   16a. Task C3 — Multi-Mode Visualizer Draw Dispatch
+   Routes to Scan / Live FFT / Oscilloscope based on state.graphMode
+════════════════════════════════════════════════════════════ */
+function drawGraphFrame() {
+  if (!ctx2d) return;
+  const mode = state.graphMode;
+  if (mode === "fft") {
+    drawFftSpectrum();
+  } else if (mode === "scope") {
+    drawOscilloscope();
+  }
+  // "scan" mode is static (re-rendered by drawViz / drawLiveSpectrogram on data change)
+}
+
+/** Mode 2: Live FFT Frequency Spectrum — real bins from AnalyserNode */
+function drawFftSpectrum() {
+  if (!ctx2d) return;
+  const analyser = getAudioAnalyser();
+  const W = vizCanvas.width;
+  const H = vizCanvas.height;
+  ctx2d.clearRect(0, 0, W, H);
+
+  if (!analyser) {
+    // Fallback: show "AWAITING AUDIO SIGNAL" text
+    ctx2d.fillStyle = "rgba(56,189,248,0.25)";
+    ctx2d.font = "bold 11px 'JetBrains Mono', monospace";
+    ctx2d.textAlign = "center";
+    ctx2d.fillText("AWAITING AUDIO SIGNAL", W / 2, H / 2);
+    ctx2d.textAlign = "left";
+    return;
+  }
+
+  const binCount = analyser.frequencyBinCount;
+  const freqData = new Uint8Array(binCount);
+  analyser.getByteFrequencyData(freqData);
+
+  // Use 64 bins for resolution (or the full count if fewer)
+  const numBars = Math.min(64, binCount);
+  const barW = (W / numBars) - 1;
+
+  // Current dominant hue from features (or fallback 200)
+  const domHue = state.features?.frames
+    ? (state.features.frames[Math.min(
+        Math.round((getActiveAudio().currentTime / (getActiveAudio().duration || 1)) *
+          (state.features.frames.length - 1)),
+        state.features.frames.length - 1
+      )]?.hue ?? 200)
+    : 200;
+
+  for (let i = 0; i < numBars; i++) {
+    // Sample evenly across all bins
+    const binIdx = Math.floor((i / numBars) * binCount);
+    const val = freqData[binIdx]; // 0–255
+    const barH = (val / 255) * H;
+    const x = i * (barW + 1);
+    const y = H - barH;
+
+    // Hue shifts across spectrum: low freq = warm, high freq = cold
+    const hue = (domHue + i * 2.8) % 360;
+    const alpha = 0.55 + (val / 255) * 0.45;
+
+    ctx2d.globalAlpha = alpha;
+    ctx2d.fillStyle = `hsl(${hue}, 85%, 55%)`;
+    ctx2d.fillRect(x, y, barW, barH);
+
+    // Glowing cap
+    if (barH > 2) {
+      ctx2d.globalAlpha = 0.9;
+      ctx2d.fillStyle = `hsl(${hue}, 100%, 85%)`;
+      ctx2d.fillRect(x, y, barW, 2);
+    }
+  }
+
+  // Frequency axis markers (approximate)
+  const nyquist = (getAudioContext()?.sampleRate || 44100) / 2;
+  const markerFreqs = [100, 500, 1000, 4000, 8000, 16000];
+  ctx2d.globalAlpha = 0.35;
+  ctx2d.fillStyle = "#94a3b8";
+  ctx2d.font = "9px 'JetBrains Mono', monospace";
+  for (const f of markerFreqs) {
+    if (f > nyquist) break;
+    const xPos = (f / nyquist) * W;
+    ctx2d.fillRect(xPos, 0, 1, H);
+    ctx2d.fillText(f >= 1000 ? `${f / 1000}k` : `${f}`, xPos + 2, H - 4);
+  }
+
+  ctx2d.globalAlpha = 1.0;
+}
+
+/** Mode 3: Live Oscilloscope Waveform — real time-domain audio samples */
+function drawOscilloscope() {
+  if (!ctx2d) return;
+  const analyser = getAudioAnalyser();
+  const W = vizCanvas.width;
+  const H = vizCanvas.height;
+  ctx2d.clearRect(0, 0, W, H);
+
+  if (!analyser) {
+    ctx2d.fillStyle = "rgba(0,255,200,0.2)";
+    ctx2d.font = "bold 11px 'JetBrains Mono', monospace";
+    ctx2d.textAlign = "center";
+    ctx2d.fillText("AWAITING AUDIO SIGNAL", W / 2, H / 2);
+    ctx2d.textAlign = "left";
+    return;
+  }
+
+  const bufLen = analyser.frequencyBinCount;
+  const timeData = new Uint8Array(bufLen);
+  analyser.getByteTimeDomainData(timeData);
+
+  // Phosphor glow — draw 3 layers (outer glow, mid glow, core)
+  const layers = [
+    { lineWidth: 5, alpha: 0.08, color: "#00ffe0" },
+    { lineWidth: 2.5, alpha: 0.35, color: "#38bdf8" },
+    { lineWidth: 1.5, alpha: 0.95, color: "#e0f7ff" },
+  ];
+
+  for (const layer of layers) {
+    ctx2d.beginPath();
+    ctx2d.lineWidth = layer.lineWidth;
+    ctx2d.strokeStyle = layer.color;
+    ctx2d.globalAlpha = layer.alpha;
+
+    for (let i = 0; i < bufLen; i++) {
+      const vx = (i / bufLen) * W;
+      const vy = ((timeData[i] / 128.0) - 1.0) * (H * 0.42) + H / 2;
+      if (i === 0) ctx2d.moveTo(vx, vy);
+      else ctx2d.lineTo(vx, vy);
+    }
+    ctx2d.stroke();
+  }
+
+  // Centerline grid
+  ctx2d.globalAlpha = 0.08;
+  ctx2d.strokeStyle = "#38bdf8";
+  ctx2d.lineWidth = 1;
+  ctx2d.beginPath();
+  ctx2d.moveTo(0, H / 2);
+  ctx2d.lineTo(W, H / 2);
+  ctx2d.stroke();
+
+  // Scope label
+  ctx2d.globalAlpha = 0.4;
+  ctx2d.fillStyle = "#00ffe0";
+  ctx2d.font = "9px 'JetBrains Mono', monospace";
+  ctx2d.fillText("OSCILLOSCOPE // TIME DOMAIN", 8, 14);
+
+  ctx2d.globalAlpha = 1.0;
+}
+
+/* ════════════════════════════════════════════════════════════
+   16b. Task C5 — Live Scientific Telemetry HUD
+   Real-time RMS dB, Fundamental Hz, Luminance, Sensor Name
+════════════════════════════════════════════════════════════ */
+function updateTelemetryHUD() {
+  const analyser = getAudioAnalyser();
+
+  // ── Audio Peak (dB) via RMS ──
+  if (analyser && telPeak) {
+    const bufLen = analyser.frequencyBinCount;
+    const timeData = new Uint8Array(bufLen);
+    analyser.getByteTimeDomainData(timeData);
+
+    let sumSq = 0;
+    for (let i = 0; i < bufLen; i++) {
+      const s = (timeData[i] / 128.0) - 1.0;
+      sumSq += s * s;
+    }
+    const rms = Math.sqrt(sumSq / bufLen);
+    const db = rms > 0.00001 ? (20 * Math.log10(rms)) : -Infinity;
+    if (isFinite(db)) {
+      telPeak.textContent = `${db.toFixed(1)} dB`;
+      telPeak.classList.toggle("is-clipping", db > -3);
+    } else {
+      telPeak.textContent = "-∞ dB";
+      telPeak.classList.remove("is-clipping");
+    }
+  }
+
+  // ── Fundamental Frequency (Hz) from current playback position ──
+  if (telFreq && state.features?.frames) {
+    const audio = state.isCustomMode ? byoVideo : getActiveAudio();
+    const dur = audio.duration || 1;
+    const cur = audio.currentTime || 0;
+    const frames = state.features.frames;
+    const fIdx = Math.min(Math.floor((cur / dur) * frames.length), frames.length - 1);
+    const frame = frames[Math.max(fIdx, 0)];
+    if (frame) {
+      // Height of the dominant column → pentatonic pitch index
+      const heights = frame.column_heights || [];
+      const domHeight = heights.length
+        ? heights.reduce((a, b) => a + b, 0) / heights.length
+        : 0.5;
+      const noteIdx = Math.round(clamp(domHeight, 0, 1) * (PENTA_FREQS.length - 1));
+      const freq = PENTA_FREQS[noteIdx];
+      const noteNames = ["A3","C4","D4","E4","G4","A4","C5","D5","E5","G5","A5"];
+      telFreq.textContent = `${freq.toFixed(0)} Hz (${noteNames[noteIdx]})`;
+    }
+  }
+
+  // ── Observed Luminance (from features.frames[t].brightness) ──
+  if (telLum && state.features?.frames) {
+    const audio = state.isCustomMode ? byoVideo : getActiveAudio();
+    const dur = audio.duration || 1;
+    const cur = audio.currentTime || 0;
+    const frames = state.features.frames;
+    const fIdx = Math.min(Math.floor((cur / dur) * frames.length), frames.length - 1);
+    const frame = frames[Math.max(fIdx, 0)];
+    if (frame) {
+      const lumPct = Math.round(clamp(frame.brightness, 0, 1) * 100);
+      telLum.textContent = `${lumPct}% RAD`;
+    }
+  }
+
+  // ── Sensor / Instrument ──
+  if (telSensor && state.currentRecord) {
+    telSensor.textContent = state.currentRecord.instrument || "—";
+  }
+}
+
+function startTelemetryLoop() {
+  stopTelemetryLoop();
+  function loop() {
+    updateTelemetryHUD();
+    if (state.graphMode !== "scan") drawGraphFrame();
+    state.telemetryRafId = requestAnimationFrame(loop);
+  }
+  state.telemetryRafId = requestAnimationFrame(loop);
+}
+
+function stopTelemetryLoop() {
+  if (state.telemetryRafId) {
+    cancelAnimationFrame(state.telemetryRafId);
+    state.telemetryRafId = null;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════
    5. Sweep Needle Synchronization
 ════════════════════════════════════════════════════════════ */
 function getActiveAudio() {
@@ -596,7 +863,7 @@ async function loadRecord(record) {
     btnViewToggle.hidden = true;
     playerStage.className = "player-stage";
     stopAll();
-    document.getElementById("card-byo")?.classList.remove("active");
+    document.getElementById("hero-byo-section")?.classList.remove("is-active");
   }
 
   if (state.currentRecord) {
@@ -690,6 +957,7 @@ function play() {
       state.isPlaying = true;
       updatePlayBtn();
       startNeedleLoop();
+      startTelemetryLoop();
       if (hudStatus) hudStatus.textContent = "OPTICAL TRACKING ACTIVE";
     }).catch(err => {
       console.info("Custom video play paused pending user interaction:", err);
@@ -704,6 +972,25 @@ function play() {
   const inactive = getInactiveAudio();
   inactive.pause();
 
+  // Connect pre-rendered audio elements to the master AnalyserNode (once)
+  if (!state.audioMainConnected) {
+    try {
+      initAudio();
+      connectAudioElement(audioMain);
+      state.audioMainConnected = true;
+    } catch (e) {
+      console.debug("connectAudioElement audioMain:", e);
+    }
+  }
+  if (!state.audioTvnConnected) {
+    try {
+      connectAudioElement(audioTvn);
+      state.audioTvnConnected = true;
+    } catch (e) {
+      console.debug("connectAudioElement audioTvn:", e);
+    }
+  }
+
   const playPromise = active.play();
   if (playPromise !== undefined) {
     playPromise
@@ -711,6 +998,7 @@ function play() {
         state.isPlaying = true;
         updatePlayBtn();
         startNeedleLoop();
+        startTelemetryLoop();
         if (hudStatus) {
           hudStatus.textContent = state.isThenVsNow ? "DUAL-EPOCH COMPARISON" : "SWEEP ACTIVE";
         }
@@ -732,6 +1020,7 @@ function pause() {
     state.isPlaying = false;
     updatePlayBtn();
     stopNeedleLoop();
+    stopTelemetryLoop();
     if (hudStatus) hudStatus.textContent = "STANDBY";
     return;
   }
@@ -741,6 +1030,7 @@ function pause() {
   state.isPlaying = false;
   updatePlayBtn();
   stopNeedleLoop();
+  stopTelemetryLoop();
   if (hudStatus) hudStatus.textContent = "STANDBY";
 }
 
@@ -991,6 +1281,7 @@ function handleCustomVideo(file) {
   audioMain.pause();
   audioTvn.pause();
   stopNeedleLoop();
+  stopTelemetryLoop();
   stopAll();
 
   // Clear existing custom video URL
@@ -1007,12 +1298,18 @@ function handleCustomVideo(file) {
   state.liveFrames = [];
   state.prevGray = null;
 
-  // Unmark any active pre-made cards and activate custom card
+  // Unmark any active pre-made cards and highlight BYO Hero section
   RECORDS.forEach(r => document.getElementById(`card-${r.id}`)?.classList.remove("active"));
-  document.getElementById("card-byo")?.classList.add("active");
+  document.getElementById("hero-byo-section")?.classList.add("is-active");
 
   const cleanName = file.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " ").toUpperCase();
   const mbSize = (file.size / (1024 * 1024)).toFixed(1);
+
+  // Update Hero BYO chip status immediately on file selection
+  if (chipStatus) chipStatus.textContent = "ANALYZING PAYLOAD…";
+  if (chipRes)    chipRes.textContent = "DETECTING RES…";
+  if (chipFps)    chipFps.textContent = "1 FPS SAMPLING";
+  if (chipDur)    chipDur.textContent = `${mbSize} MB`;
 
   const customRecord = {
     id: "byo_earth",
@@ -1076,6 +1373,12 @@ function handleCustomVideo(file) {
     timeTotal.textContent = fmt(byoVideo.duration);
     progressBar.max = 100;
     if (hudStatus) hudStatus.textContent = "OPTICAL LOCK // READY";
+
+    // Update Hero BYO metadata chips with real file info
+    if (chipStatus) chipStatus.textContent = "PAYLOAD MOUNTED";
+    if (chipRes)    chipRes.textContent = `${byoVideo.videoWidth}×${byoVideo.videoHeight}`;
+    if (chipFps)    chipFps.textContent = "1 FPS SAMPLING";
+    if (chipDur)    chipDur.textContent = fmt(byoVideo.duration);
 
     // Extract and sonify the initial frame at t=0
     byoVideo.currentTime = 0;
@@ -1223,80 +1526,8 @@ function buildShelf() {
     shelf.appendChild(card);
   });
 
-  // 5th Record Sleeve: "Bring Your Own Earth"
-  const customCard = document.createElement("article");
-  customCard.id        = "card-byo";
-  customCard.className = "record-card record-card--custom";
-  customCard.setAttribute("role", "listitem");
-  customCard.tabIndex  = 0;
-  customCard.setAttribute("aria-label", "Bring Your Own Earth: Drop or browse any NASA video to sonify in real time. Press Enter to select file.");
-
-  customCard.innerHTML = `
-    <div class="record-card__cover record-card__cover--custom">
-      <div class="custom-drop-art">
-        <div class="drop-reticle">
-          <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-            <polyline points="17 8 12 3 7 8"></polyline>
-            <line x1="12" y1="3" x2="12" y2="15"></line>
-          </svg>
-        </div>
-        <span class="custom-drop-prompt">DROP NASA VIDEO HERE</span>
-        <span class="custom-drop-sub">OR CLICK TO BROWSE (MP4 / WEBM)</span>
-      </div>
-      <div class="record-card__header">
-        <span class="catalog-badge catalog-badge--custom">LIVE OPTICAL</span>
-        <span class="catalog-series">CUSTOM DATASET</span>
-      </div>
-      <div class="active-reticle" aria-hidden="true">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
-          <circle cx="12" cy="12" r="9" stroke-dasharray="3 3"></circle>
-          <circle cx="12" cy="12" r="4"></circle>
-          <line x1="12" y1="2" x2="12" y2="6"></line>
-          <line x1="12" y1="18" x2="12" y2="22"></line>
-          <line x1="2" y1="12" x2="6" y2="12"></line>
-          <line x1="18" y1="12" x2="22" y2="12"></line>
-        </svg>
-      </div>
-    </div>
-    <div class="record-card__body">
-      <div class="record-card__top">
-        <h3 class="record-card__title">Bring Your Own Earth</h3>
-        <span class="record-card__dot record-card__dot--custom"></span>
-      </div>
-      <div class="record-card__subtitle">Client-Side Optical Sonification</div>
-      <div class="record-card__meta">
-        <span class="record-card__instrument">Dynamic Browser Frame Extractor</span>
-      </div>
-    </div>
-  `;
-
-  customCard.addEventListener("click", () => byoFileInput.click());
-  customCard.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      byoFileInput.click();
-    }
-  });
-
-  // Drag-and-drop handlers for the custom card
-  customCard.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    customCard.classList.add("drag-over");
-  });
-  customCard.addEventListener("dragleave", () => {
-    customCard.classList.remove("drag-over");
-  });
-  customCard.addEventListener("drop", (e) => {
-    e.preventDefault();
-    customCard.classList.remove("drag-over");
-    if (e.dataTransfer && e.dataTransfer.files.length) {
-      handleCustomVideo(e.dataTransfer.files[0]);
-    }
-  });
-
-  shelf.appendChild(customCard);
-  if (catalogCount) catalogCount.textContent = "4 CURATED DATASETS + 1 CUSTOM BYO ENGINE";
+  // 4 curated records only — BYO is handled by the Hero Section 01
+  if (catalogCount) catalogCount.textContent = "4 OBSERVATION DATASETS LOADED";
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -1338,6 +1569,85 @@ function init() {
         handleCustomVideo(byoFileInput.files[0]);
       }
     });
+  }
+
+  // ── Task C3: Graph Tab Bar ──
+  [tabGraphScan, tabGraphFft, tabGraphScope].forEach(btn => {
+    if (!btn) return;
+    btn.addEventListener("click", () => {
+      state.graphMode = btn.dataset.graph; // "scan" | "fft" | "scope"
+
+      // Update ARIA + active class
+      [tabGraphScan, tabGraphFft, tabGraphScope].forEach(b => {
+        if (!b) return;
+        b.classList.toggle("active", b === btn);
+        b.setAttribute("aria-selected", b === btn ? "true" : "false");
+      });
+
+      // If switching back to scan, re-render the static spectrogram immediately
+      if (state.graphMode === "scan" && state.features) {
+        if (state.isCustomMode && state.features.frames?.length === 1) {
+          drawLiveSpectrogram(state.features.frames[0]);
+        } else {
+          drawViz(state.features);
+        }
+      }
+
+      if (hudStatus) {
+        const labels = { scan: "PLANETARY SCAN", fft: "LIVE FFT SPECTRUM", scope: "OSCILLOSCOPE" };
+        hudStatus.textContent = labels[state.graphMode] || "STANDBY";
+      }
+    });
+  });
+
+  // ── Task C4: Acoustic Instrument Selector Pills ──
+  instPills.forEach(pill => {
+    pill.addEventListener("click", () => {
+      const presetId = pill.dataset.preset;
+      setInstrumentPreset(presetId);
+
+      // Update active state across all pills
+      instPills.forEach(p => {
+        p.classList.toggle("active", p === pill);
+        p.setAttribute("aria-checked", p === pill ? "true" : "false");
+      });
+
+      if (hudStatus) hudStatus.textContent = `PRESET ARMED // ${pill.textContent.trim()}`;
+    });
+  });
+
+  // ── Task C2: Dock Mode Toggle ──
+  if (btnDockMode) {
+    btnDockMode.addEventListener("click", () => {
+      const isStudio = playerPanel.classList.contains("is-studio");
+      playerPanel.classList.toggle("is-studio", !isStudio);
+      playerPanel.classList.toggle("is-docked", isStudio);
+      btnDockMode.textContent = isStudio ? "STUDIO VIEW" : "DOCK VIEW";
+    });
+  }
+
+  // ── Task C1: Hero BYO Mission Bay — Browse button ──
+  if (btnByoBrowse) {
+    btnByoBrowse.addEventListener("click", () => byoFileInput?.click());
+  }
+
+  // ── Task C1: Hero BYO Mission Bay — Drop target drag & drop ──
+  if (byoDropTarget) {
+    byoDropTarget.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      byoDropTarget.classList.add("drag-over");
+    });
+    byoDropTarget.addEventListener("dragleave", () => {
+      byoDropTarget.classList.remove("drag-over");
+    });
+    byoDropTarget.addEventListener("drop", (e) => {
+      e.preventDefault();
+      byoDropTarget.classList.remove("drag-over");
+      if (e.dataTransfer?.files?.length) {
+        handleCustomVideo(e.dataTransfer.files[0]);
+      }
+    });
+    byoDropTarget.addEventListener("click", () => byoFileInput?.click());
   }
 
   // View toggle button handler (overlay -> video -> spectrogram)

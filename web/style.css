@@ -236,10 +236,179 @@ body {
   color: var(--text-dim);
 }
 
+/* ───── Section 01: Hero BYO Workstation (Task C1) ───── */
+.hero-byo-section {
+  margin-bottom: 2.75rem;
+}
+.hero-byo-section.is-active .byo-hero-deck {
+  border-color: var(--accent-cyan);
+  background: radial-gradient(circle at 15% 50%, rgba(56, 189, 248, 0.14) 0%, rgba(10, 14, 22, 0.95) 70%);
+  box-shadow: 0 12px 36px -8px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(56, 189, 248, 0.2), inset 0 0 24px rgba(56, 189, 248, 0.07);
+}
+.byo-hero-deck {
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  gap: 2rem;
+  background: radial-gradient(circle at 15% 50%, rgba(56, 189, 248, 0.08) 0%, rgba(10, 14, 22, 0.95) 70%);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: var(--radius-lg);
+  padding: 2.25rem 2.5rem;
+  box-shadow: 0 12px 36px -8px rgba(0, 0, 0, 0.7), inset 0 0 24px rgba(56, 189, 248, 0.03);
+  position: relative;
+  overflow: hidden;
+  transition: border-color var(--transition-norm), background var(--transition-norm);
+}
+.byo-hero-deck.drag-over {
+  border-color: var(--accent-emerald);
+  background: radial-gradient(circle at 15% 50%, rgba(16, 185, 129, 0.15) 0%, rgba(10, 14, 22, 0.95) 70%);
+}
+.byo-hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  color: var(--accent-cyan);
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  padding: 0.25rem 0.65rem;
+  border-radius: var(--radius-xs);
+  margin-bottom: 0.85rem;
+}
+.byo-badge-sep {
+  opacity: 0.4;
+}
+.byo-badge-sub {
+  color: var(--text-dim);
+}
+.byo-hero-title {
+  font-size: 1.65rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #fff;
+  margin-bottom: 0.65rem;
+}
+.byo-hero-desc {
+  font-size: 0.88rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin-bottom: 1.5rem;
+  max-width: 580px;
+}
+.byo-hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+}
+.btn-byo-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.65rem 1.4rem;
+  background: var(--accent-cyan);
+  color: #03060a;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  border: none;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
+}
+.btn-byo-action:hover {
+  background: #7dd3fc;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(56, 189, 248, 0.4);
+}
+.byo-hero-hint {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+}
+
+.byo-drop-target {
+  height: 100%;
+  min-height: 190px;
+  border: 1px dashed rgba(56, 189, 248, 0.4);
+  border-radius: var(--radius-md);
+  background: rgba(14, 21, 33, 0.45);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 1.5rem;
+  cursor: pointer;
+  transition: all var(--transition-norm);
+}
+.byo-hero-deck.drag-over .byo-drop-target,
+.byo-drop-target:hover {
+  border-color: var(--accent-emerald);
+  background: rgba(16, 185, 129, 0.08);
+  transform: scale(1.01);
+}
+.byo-target-reticle {
+  color: var(--accent-cyan);
+  margin-bottom: 0.65rem;
+  transition: transform var(--transition-norm), color var(--transition-norm);
+}
+.byo-drop-target:hover .byo-target-reticle {
+  color: var(--accent-emerald);
+  transform: scale(1.1);
+}
+.byo-target-prompt {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-main);
+  margin-bottom: 0.85rem;
+}
+.byo-meta-chips {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+.byo-chip {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  padding: 0.2rem 0.5rem;
+  border-radius: var(--radius-xs);
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-dim);
+}
+
+@media (max-width: 900px) {
+  .byo-hero-deck {
+    grid-template-columns: 1fr;
+    padding: 1.75rem;
+  }
+}
+
+/* ───── Section 02: 4-Record Clean Desktop Shelf (Task C1) ───── */
 .shelf {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
-  gap: 1.5rem;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1.25rem;
+}
+@media (max-width: 1080px) {
+  .shelf {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 600px) {
+  .shelf {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ───── Observation Record Cards ───── */
@@ -581,6 +750,26 @@ body {
   box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.85);
   transition: transform var(--transition-norm);
 }
+
+/* ── Task C2: Studio vs Docked Layout ── */
+.player-panel.is-studio {
+  position: relative;
+  bottom: auto;
+  margin: 0 1.5rem 2rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 48px rgba(0, 0, 0, 0.7);
+}
+
+.player-panel.is-docked {
+  position: sticky;
+  bottom: 0;
+  margin: 0;
+  border-radius: 0;
+  border-top: 1px solid var(--border-subtle);
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.85);
+}
+
 .player-panel.hidden {
   transform: translateY(100%);
 }
@@ -1029,6 +1218,132 @@ input[type="range"].volume-bar::-webkit-slider-thumb {
 .instrument-select:focus-visible {
   outline: 1px solid var(--accent-cyan);
   border-radius: var(--radius-xs);
+}
+
+/* ════════════════════════════════════════════════════════════
+   Task C3: Graph Tab Bar (Multi-Mode Audio Visualizer)
+════════════════════════════════════════════════════════════ */
+.graph-tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  pointer-events: auto;
+}
+
+.graph-tab {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  padding: 0.2rem 0.6rem;
+  border-radius: var(--radius-xs);
+  border: 1px solid transparent;
+  background: rgba(10, 20, 40, 0.65);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.graph-tab:hover {
+  color: var(--text-muted);
+  border-color: var(--border-subtle);
+}
+
+.graph-tab.active,
+.graph-tab[aria-selected="true"] {
+  color: var(--accent-cyan);
+  border-color: rgba(56, 189, 248, 0.5);
+  background: rgba(56, 189, 248, 0.1);
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.15);
+}
+
+/* ════════════════════════════════════════════════════════════
+   Task C5: Live Scientific Telemetry HUD Bar
+════════════════════════════════════════════════════════════ */
+.telemetry-bar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0 1.5rem;
+  border-bottom: 1px solid var(--border-subtle);
+  background: rgba(3, 6, 12, 0.6);
+  font-family: var(--font-mono);
+  flex-wrap: wrap;
+}
+
+.telemetry-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 1rem 0.4rem 0;
+  border-right: 1px solid var(--border-subtle);
+  margin-right: 1rem;
+}
+
+.telemetry-item:last-child {
+  border-right: none;
+  margin-right: 0;
+}
+
+.telemetry-label {
+  font-size: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--text-dim);
+}
+
+.telemetry-value {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--accent-cyan);
+  font-variant-numeric: tabular-nums;
+  transition: color var(--transition-fast);
+}
+
+.telemetry-value.is-clipping {
+  color: #ef4444;
+  text-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+}
+
+/* ════════════════════════════════════════════════════════════
+   Task C4: Acoustic Instrument Selector Pills
+════════════════════════════════════════════════════════════ */
+.instrument-selector {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.inst-pill {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.inst-pill:hover {
+  border-color: var(--border-hover);
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.inst-pill.active,
+.inst-pill[aria-checked="true"] {
+  background: rgba(56, 189, 248, 0.14);
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.2);
 }
 
 /* Specialized Console Modes */
