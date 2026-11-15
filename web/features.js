@@ -1,392 +1,259 @@
 /**
- * features.js
+ * features.js — Browser-side visual feature extraction
  *
- * Browser-side port of vision/measure_features.py.
- * Extracts per-frame visual features from a canvas ImageData object.
+ * Port of vision/measure_features.py for the "Bring Your Own Earth" mode.
+ * Takes raw ImageData from a <canvas> and returns the same feature shape
+ * as the pre-computed JSON files:
  *
- * Usage (ES module):
+ *   { brightness, hue, saturation, edges, motion,
+ *     columns[32], column_heights[32], column_hues[32] }
+ *
+ * Usage:
  *   import { extractFeatures } from './features.js';
  *
- *   const features = extractFeatures(imageData, prevImageData);
- *   // features = { brightness, hue, saturation, motion, columns[], column_heights[], column_hues[] }
+ *   const ctx = canvas.getContext('2d');
+ *   ctx.drawImage(video, 0, 0, 640, 360);
+ *   const imageData = ctx.getImageData(0, 0, 640, 360);
  *
- * Notes:
- *   - No CROP / PIXEL_MASK / TRIM — this is generic mode for any video.
- *   - Brightness values are raw (not 5th/95th normalised) since we don't
- *     have all frames upfront in live mode.
- *   - imageData is a standard ImageData object from canvas.getImageData().
- *   - prevImageData may be null for the very first frame (motion = 0).
+ *   const { features, gray } = extractFeatures(imageData, 640, 360);
+ *   // On the next frame, pass gray back as prevGray:
+ *   const next = extractFeatures(nextImageData, 640, 360, gray);
  */
 
 // ── constants ────────────────────────────────────────────────────────
-const N_STRIPS = 32;         // number of vertical strips (matches Python)
-const DARK_THRESHOLD = 30;   // pixels with V < this are "dark" and ignored
-const HUE_BINS = 180;        // histogram bins for hue (each bin = 2°)
 
+export const N_STRIPS = 32;
+const DARK_V = 30;          // pixels with V < 30 are masked out
+const HUE_BINS = 180;       // matches OpenCV's 0-179 hue range
+const EDGE_THRESHOLD = 30;  // gradient magnitude for simple edge detection
 
-// ── RGB → HSV conversion ─────────────────────────────────────────────
-/**
- * Convert a single pixel from RGB to HSV.
- * Input:  r, g, b in 0-255
- * Output: { h: 0-179 (OpenCV-style, so 1 bin = 2°), s: 0-255, v: 0-255 }
- *
- * We use the OpenCV convention (h in 0-179) so the histogram math
- * stays identical to the Python code.
- */
+// ── RGB → HSV (OpenCV convention) ────────────────────────────────────
+// Returns [h 0-179, s 0-255, v 0-255], same scale as OpenCV so the
+// hue histogram logic matches the Python version exactly.
+
 function rgbToHsv(r, g, b) {
-  const rn = r / 255;
-  const gn = g / 255;
-  const bn = b / 255;
+  const v = Math.max(r, g, b);
+  const diff = v - Math.min(r, g, b);
 
-  const max = Math.max(rn, gn, bn);
-  const min = Math.min(rn, gn, bn);
-  const delta = max - min;
+  if (diff === 0) return [0, 0, v];
 
-  // Value
-  const v = max;
+  const s = Math.round((diff / v) * 255);
+  let h;
+  if (v === r)      h = 30 * ((g - b) / diff);          // 0-60° → 0-30
+  else if (v === g)  h = 30 * ((b - r) / diff) + 60;     // 60-120° → 30-60
+  else               h = 30 * ((r - g) / diff) + 120;    // 120-180° → 60-90
 
-  // Saturation
-  const s = max === 0 ? 0 : delta / max;
-
-  // Hue  (0-360°, then ÷ 2 → 0-179 for OpenCV convention)
-  let h = 0;
-  if (delta !== 0) {
-    if (max === rn) {
-      h = 60 * (((gn - bn) / delta) % 6);
-    } else if (max === gn) {
-      h = 60 * ((bn - rn) / delta + 2);
-    } else {
-      h = 60 * ((rn - gn) / delta + 4);
-    }
-    if (h < 0) h += 360;
-  }
-
-  return {
-    h: Math.round(h / 2),   // 0-179 (OpenCV-style)
-    s: Math.round(s * 255), // 0-255
-    v: Math.round(v * 255), // 0-255
-  };
+  if (h < 0) h += 180;
+  return [Math.round(h), s, v];
 }
 
-
-// ── build HSV arrays from ImageData ──────────────────────────────────
+// ── main API ─────────────────────────────────────────────────────────
 /**
- * Convert an ImageData (RGBA, uint8) into three flat typed arrays:
- *   hArr[i], sArr[i], vArr[i]  for pixel i = row*width + col
+ * Extract visual features from one video frame.
  *
- * Returns { hArr, sArr, vArr, width, height }
+ * @param {ImageData} imageData  - from canvas.getImageData()
+ * @param {number}    width      - frame width  (should be ~640 for speed)
+ * @param {number}    height     - frame height (should be ~360 for speed)
+ * @param {Uint8Array|null} prevGray - grayscale of previous frame (for motion)
+ * @returns {{ features: Object, gray: Uint8Array }}
  */
-function imageDataToHsv(imageData) {
-  const { data, width, height } = imageData;
-  const n = width * height;
-  const hArr = new Uint8Array(n);
-  const sArr = new Uint8Array(n);
-  const vArr = new Uint8Array(n);
+export function extractFeatures(imageData, width, height, prevGray = null) {
+  const px = imageData.data;          // Uint8ClampedArray [R,G,B,A, …]
+  const numPixels = width * height;
 
-  for (let i = 0; i < n; i++) {
-    const offset = i * 4;
-    const { h, s, v } = rgbToHsv(data[offset], data[offset + 1], data[offset + 2]);
+  // ── 1. Convert every pixel to HSV + grayscale + mask ───────────
+  const hArr = new Uint8Array(numPixels);   // hue   0-179
+  const sArr = new Uint8Array(numPixels);   // sat   0-255
+  const vArr = new Uint8Array(numPixels);   // value 0-255
+  const gray = new Uint8Array(numPixels);   // BT.601 luma
+  const mask = new Uint8Array(numPixels);   // 1 = keep
+
+  for (let i = 0; i < numPixels; i++) {
+    const off = i * 4;
+    const r = px[off], g0 = px[off + 1], b = px[off + 2];
+
+    // grayscale (BT.601 weights, same as OpenCV cvtColor)
+    gray[i] = (0.299 * r + 0.587 * g0 + 0.114 * b + 0.5) | 0;
+
+    const [h, s, v] = rgbToHsv(r, g0, b);
     hArr[i] = h;
     sArr[i] = s;
     vArr[i] = v;
+
+    mask[i] = v >= DARK_V ? 1 : 0;
   }
 
-  return { hArr, sArr, vArr, width, height };
-}
+  // ── 2. Scalar features ─────────────────────────────────────────
 
-
-// ── generic mask ─────────────────────────────────────────────────────
-/**
- * Returns a Uint8Array (1 = keep, 0 = ignore) for every pixel.
- * Generic rule: keep pixels with V >= DARK_THRESHOLD.
- */
-function buildMask(vArr) {
-  const mask = new Uint8Array(vArr.length);
-  for (let i = 0; i < vArr.length; i++) {
-    mask[i] = vArr[i] >= DARK_THRESHOLD ? 1 : 0;
+  // brightness: mean V of masked pixels, /255
+  let vSum = 0, maskCount = 0;
+  for (let i = 0; i < numPixels; i++) {
+    if (mask[i]) { vSum += vArr[i]; maskCount++; }
   }
-  return mask;
-}
+  const brightness = maskCount > 0 ? vSum / maskCount / 255 : 0;
 
+  // saturation: mean S of masked pixels, /255
+  let sSum = 0;
+  for (let i = 0; i < numPixels; i++) {
+    if (mask[i]) sSum += sArr[i];
+  }
+  const saturation = maskCount > 0 ? sSum / maskCount / 255 : 0;
 
-// ── dominant hue from a set of pixels ────────────────────────────────
-/**
- * Returns the dominant hue in degrees (0-360) from selected pixels,
- * weighted by saturation.  Falls back to 0 if no pixels pass.
- *
- * hSlice and sSlice are sub-arrays (or views) of hArr / sArr.
- * maskSlice is the corresponding sub-array of the mask.
- */
-function dominantHue(hSlice, sSlice, maskSlice) {
-  // Saturation-weighted histogram over HUE_BINS bins
-  const hist = new Float64Array(HUE_BINS);
-  let anyPixel = false;
+  // hue: saturation-weighted histogram, peak bin × 2 → degrees
+  const hueHist = new Float64Array(HUE_BINS);
+  for (let i = 0; i < numPixels; i++) {
+    if (mask[i]) hueHist[hArr[i]] += sArr[i];
+  }
+  let peakBin = 0, peakVal = 0;
+  for (let b = 0; b < HUE_BINS; b++) {
+    if (hueHist[b] > peakVal) { peakVal = hueHist[b]; peakBin = b; }
+  }
+  const hue = peakBin * 2;   // 0-360°
 
-  for (let i = 0; i < maskSlice.length; i++) {
-    if (maskSlice[i]) {
-      hist[hSlice[i]] += sSlice[i];
-      anyPixel = true;
+  // edges: simple gradient magnitude (Sobel-like, no Canny)
+  let edgeCount = 0;
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const idx = y * width + x;
+      const gx = Math.abs(gray[idx + 1] - gray[idx - 1]);
+      const gy = Math.abs(gray[idx + width] - gray[idx - width]);
+      if (gx + gy > EDGE_THRESHOLD) edgeCount++;
     }
   }
+  const edges = edgeCount / ((width - 2) * (height - 2));
 
-  if (!anyPixel) return 0;
-
-  // Find peak bin
-  let maxBin = 0;
-  for (let b = 1; b < HUE_BINS; b++) {
-    if (hist[b] > hist[maxBin]) maxBin = b;
-  }
-
-  return maxBin * 2; // convert from OpenCV bin index → degrees
-}
-
-
-// ── brightness ───────────────────────────────────────────────────────
-/**
- * Mean V of masked pixels, normalised 0-1.
- */
-function meanBrightness(vArr, mask) {
-  let sum = 0;
-  let count = 0;
-  for (let i = 0; i < vArr.length; i++) {
-    if (mask[i]) {
-      sum += vArr[i];
-      count++;
+  // motion: mean |current − previous| / 255
+  let motion = 0;
+  if (prevGray) {
+    let diffSum = 0;
+    for (let i = 0; i < numPixels; i++) {
+      diffSum += Math.abs(gray[i] - prevGray[i]);
     }
-  }
-  return count === 0 ? 0 : sum / count / 255;
-}
-
-
-// ── saturation ───────────────────────────────────────────────────────
-/**
- * Mean S of masked pixels, normalised 0-1.
- */
-function meanSaturation(sArr, mask) {
-  let sum = 0;
-  let count = 0;
-  for (let i = 0; i < sArr.length; i++) {
-    if (mask[i]) {
-      sum += sArr[i];
-      count++;
-    }
-  }
-  return count === 0 ? 0 : sum / count / 255;
-}
-
-
-// ── motion ───────────────────────────────────────────────────────────
-/**
- * Mean absolute pixel difference between current and previous frame,
- * using the V channel only.  Returns 0 if prevVArr is null.
- * Normalised 0-1.
- */
-function motionScore(vArr, prevVArr) {
-  if (!prevVArr || prevVArr.length !== vArr.length) return 0;
-  let sum = 0;
-  for (let i = 0; i < vArr.length; i++) {
-    sum += Math.abs(vArr[i] - prevVArr[i]);
-  }
-  return sum / vArr.length / 255;
-}
-
-
-// ── strip (column) helpers ───────────────────────────────────────────
-/**
- * Returns an array of N_STRIPS { start, end } column ranges.
- */
-function stripSlices(width) {
-  const slices = [];
-  for (let i = 0; i < N_STRIPS; i++) {
-    const start = Math.round((i / N_STRIPS) * width);
-    const end   = Math.round(((i + 1) / N_STRIPS) * width);
-    slices.push({ start, end });
-  }
-  return slices;
-}
-
-/**
- * Extract a flat sub-array for pixels in columns [colStart, colEnd).
- * Returns { hSlice, sSlice, vSlice, maskSlice } as plain arrays.
- *
- * We iterate row by row so that we can also compute height-weighted sums
- * efficiently later.
- */
-function getStripData(hArr, sArr, vArr, mask, width, height, colStart, colEnd) {
-  const stripW = colEnd - colStart;
-  const n = stripW * height;
-  const hSlice    = new Uint8Array(n);
-  const sSlice    = new Uint8Array(n);
-  const vSlice    = new Uint8Array(n);
-  const maskSlice = new Uint8Array(n);
-
-  for (let row = 0; row < height; row++) {
-    for (let col = colStart; col < colEnd; col++) {
-      const srcIdx = row * width + col;
-      const dstIdx = row * stripW + (col - colStart);
-      hSlice[dstIdx]    = hArr[srcIdx];
-      sSlice[dstIdx]    = sArr[srcIdx];
-      vSlice[dstIdx]    = vArr[srcIdx];
-      maskSlice[dstIdx] = mask[srcIdx];
-    }
+    motion = diffSum / numPixels / 255;
   }
 
-  return { hSlice, sSlice, vSlice, maskSlice, stripW };
-}
+  // ── 3. Strip (column) features ─────────────────────────────────
+  const columns      = new Array(N_STRIPS);
+  const columnHeights = new Array(N_STRIPS);
+  const columnHues    = new Array(N_STRIPS);
 
-/**
- * Per-strip brightness: mean V of masked pixels, normalised 0-1.
- */
-function stripBrightness(vSlice, maskSlice) {
-  let sum = 0;
-  let count = 0;
-  for (let i = 0; i < maskSlice.length; i++) {
-    if (maskSlice[i]) {
-      sum += vSlice[i];
-      count++;
-    }
+  // Pre-compute strip edges (same as Python np.linspace)
+  const stripEdges = new Array(N_STRIPS + 1);
+  for (let i = 0; i <= N_STRIPS; i++) {
+    stripEdges[i] = Math.round(i * width / N_STRIPS);
   }
-  return count === 0 ? 0 : sum / count / 255;
-}
 
-/**
- * Brightness-weighted average row position for a strip.
- * 0 = bottom, 1 = top.  Returns 0.5 if the strip is fully dark.
- *
- * stripW is the number of columns in this strip.
- * height is the total number of rows.
- */
-function stripHeight(vSlice, maskSlice, stripW, height) {
-  let weightedRowSum = 0;
-  let totalWeight = 0;
+  for (let s = 0; s < N_STRIPS; s++) {
+    const x0 = stripEdges[s];
+    const x1 = stripEdges[s + 1];
 
-  for (let row = 0; row < height; row++) {
-    for (let col = 0; col < stripW; col++) {
-      const i = row * stripW + col;
-      if (maskSlice[i]) {
-        const w = vSlice[i];
-        weightedRowSum += row * w;
-        totalWeight += w;
+    // ── strip brightness ──
+    let stripV = 0, stripMask = 0;
+    for (let y = 0; y < height; y++) {
+      for (let x = x0; x < x1; x++) {
+        const idx = y * width + x;
+        if (mask[idx]) { stripV += vArr[idx]; stripMask++; }
       }
     }
+    columns[s] = stripMask > 0 ? stripV / stripMask / 255 : 0;
+
+    // ── strip height: brightness-weighted row position ──
+    //    0 = bottom, 1 = top; 0.5 if no signal
+    if (stripMask === 0) {
+      columnHeights[s] = 0.5;
+    } else {
+      let weightedRow = 0, totalWeight = 0;
+      for (let y = 0; y < height; y++) {
+        let rowWeight = 0;
+        for (let x = x0; x < x1; x++) {
+          const idx = y * width + x;
+          if (mask[idx]) rowWeight += vArr[idx];
+        }
+        weightedRow += y * rowWeight;
+        totalWeight += rowWeight;
+      }
+      const meanRow = weightedRow / totalWeight;
+      columnHeights[s] = 1 - meanRow / (height - 1);
+    }
+
+    // ── strip hue: saturation-weighted histogram ──
+    if (stripMask === 0) {
+      columnHues[s] = hue;  // fallback to frame hue
+    } else {
+      const stripHist = new Float64Array(HUE_BINS);
+      for (let y = 0; y < height; y++) {
+        for (let x = x0; x < x1; x++) {
+          const idx = y * width + x;
+          if (mask[idx]) stripHist[hArr[idx]] += sArr[idx];
+        }
+      }
+      let sPeak = 0, sPeakVal = 0;
+      for (let b = 0; b < HUE_BINS; b++) {
+        if (stripHist[b] > sPeakVal) { sPeakVal = stripHist[b]; sPeak = b; }
+      }
+      columnHues[s] = sPeak * 2;
+    }
   }
 
-  if (totalWeight === 0) return 0.5;
-  const meanRow = weightedRowSum / totalWeight;
-  return 1 - meanRow / (height - 1); // 0 = bottom, 1 = top
-}
-
-
-// ── main exported function ───────────────────────────────────────────
-/**
- * Extract visual features from one frame.
- *
- * @param {ImageData} imageData      - Current frame pixels (from canvas.getImageData)
- * @param {ImageData|null} prevImageData - Previous frame pixels, or null for first frame
- * @returns {Object} Feature dict matching the JSON schema:
- *   {
- *     brightness,       // 0-1
- *     hue,              // 0-360 degrees
- *     saturation,       // 0-1
- *     motion,           // 0-1
- *     columns[32],      // 0-1 per strip
- *     column_heights[32],// 0-1 per strip (0=bottom, 1=top)
- *     column_hues[32],  // 0-360 per strip
- *   }
- */
-export function extractFeatures(imageData, prevImageData = null) {
-  const { width, height } = imageData;
-
-  // ── build HSV arrays ──
-  const { hArr, sArr, vArr } = imageDataToHsv(imageData);
-  const mask = buildMask(vArr);
-
-  // ── build previous V array for motion (if available) ──
-  let prevVArr = null;
-  if (prevImageData) {
-    const prev = imageDataToHsv(prevImageData);
-    prevVArr = prev.vArr;
-  }
-
-  // ── scalar features ──
-  const brightness = meanBrightness(vArr, mask);
-  const saturation = meanSaturation(sArr, mask);
-  const hue        = dominantHue(hArr, sArr, mask);
-  const motion     = motionScore(vArr, prevVArr);
-
-  // ── strip features ──
-  const slices        = stripSlices(width);
-  const columns       = [];
-  const columnHeights = [];
-  const columnHues    = [];
-
-  for (const { start, end } of slices) {
-    const { hSlice, sSlice, vSlice, maskSlice, stripW } =
-      getStripData(hArr, sArr, vArr, mask, width, height, start, end);
-
-    columns.push(stripBrightness(vSlice, maskSlice));
-    columnHeights.push(stripHeight(vSlice, maskSlice, stripW, height));
-
-    // Strip hue: use frame hue as fallback if strip is fully dark
-    const anyMasked = maskSlice.some(v => v === 1);
-    columnHues.push(anyMasked ? dominantHue(hSlice, sSlice, maskSlice) : hue);
-  }
-
-  return {
-    brightness,
+  // ── 4. Assemble output ─────────────────────────────────────────
+  const features = {
+    brightness: round3(brightness),
     hue,
-    saturation,
-    motion,
-    columns,
-    column_heights: columnHeights,
-    column_hues:    columnHues,
+    saturation: round3(saturation),
+    edges:  round3(edges),
+    motion: round3(motion),
+    columns:        columns.map(round3),
+    column_heights: columnHeights.map(round3),
+    column_hues:    columnHues.map(v => Math.round(v)),
   };
+
+  return { features, gray };
 }
 
 
-// ── convenience: analyse a <video> frame via an offscreen canvas ─────
-/**
- * Draw the current video frame onto an offscreen canvas and extract
- * features.  Call this inside a requestAnimationFrame / timeupdate loop.
- *
- * @param {HTMLVideoElement} video     - The playing video element
- * @param {OffscreenCanvas|HTMLCanvasElement} canvas - Offscreen canvas (downscaled)
- * @param {ImageData|null} prevImageData - Previous frame's ImageData (or null)
- * @returns {{ features: Object, imageData: ImageData }}
- *
- * Example:
- *   const canvas = new OffscreenCanvas(640, 360);
- *   let prevImageData = null;
- *
- *   video.addEventListener('timeupdate', () => {
- *     const { features, imageData } = analyzeVideoFrame(video, canvas, prevImageData);
- *     prevImageData = imageData;
- *     synth.playFrame(features);
- *   });
- */
-export function analyzeVideoFrame(video, canvas, prevImageData = null) {
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const features  = extractFeatures(imageData, prevImageData);
-  return { features, imageData };
+// ── helpers ──────────────────────────────────────────────────────────
+
+function round3(v) {
+  return Math.round(v * 1000) / 1000;
 }
 
 
-// ── round helper (matches Python's round-to-3-decimals) ─────────────
+// ── batch mode (optional) ────────────────────────────────────────────
 /**
- * Round all scalar and array values in a feature dict to 3 decimals.
- * Useful if you want to log or display values without floating-point noise.
+ * Process a whole video and return an array of feature objects.
+ * Useful for pre-scanning a dropped video before playback.
+ *
+ * @param {HTMLVideoElement} video - loaded video element
+ * @param {HTMLCanvasElement} canvas - offscreen canvas for frame capture
+ * @param {number} fps - frames per second to sample (default 1)
+ * @param {function} onProgress - callback(fractionComplete) for UI
+ * @returns {Promise<Object[]>} array of feature dicts
  */
-export function roundFeatures(f) {
-  const r = v => Math.round(v * 1000) / 1000;
-  return {
-    brightness:     r(f.brightness),
-    hue:            r(f.hue),
-    saturation:     r(f.saturation),
-    motion:         r(f.motion),
-    columns:        f.columns.map(r),
-    column_heights: f.column_heights.map(r),
-    column_hues:    f.column_hues.map(r),
-  };
+export async function extractAllFrames(video, canvas, fps = 1, onProgress = null) {
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const w = canvas.width;
+  const h = canvas.height;
+  const duration = video.duration;
+  const step = 1 / fps;
+  const frames = [];
+  let prevGray = null;
+
+  for (let t = 0; t < duration; t += step) {
+    // seek to time t
+    video.currentTime = t;
+    await new Promise(resolve => {
+      video.onseeked = resolve;
+    });
+
+    ctx.drawImage(video, 0, 0, w, h);
+    const imageData = ctx.getImageData(0, 0, w, h);
+    const { features, gray } = extractFeatures(imageData, w, h, prevGray);
+    features.t = Math.round(t);
+    frames.push(features);
+    prevGray = gray;
+
+    if (onProgress) onProgress(t / duration);
+  }
+
+  return frames;
 }
