@@ -554,6 +554,11 @@ async function loadRecord(record) {
 
   // Mount audio pipelines
   audioMain.src = record.audio;
+  audioMain.onerror = () => {
+    if (audioMain.src.endsWith(".mp3")) {
+      audioMain.src = audioMain.src.replace(/\.mp3$/, ".wav");
+    }
+  };
   audioMain.load();
 
   if (record.thenVsNow && record.thenVsNowAudio) {
