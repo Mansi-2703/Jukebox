@@ -316,9 +316,18 @@ function drawViz(features) {
 /* ════════════════════════════════════════════════════════════
    5. Sweep Needle Synchronization
 ════════════════════════════════════════════════════════════ */
+function getActiveAudio() {
+  return (state.isThenVsNow && state.currentRecord?.thenVsNowAudio) ? audioTvn : audioMain;
+}
+
+function getInactiveAudio() {
+  return (state.isThenVsNow && state.currentRecord?.thenVsNowAudio) ? audioMain : audioTvn;
+}
+
 function updateNeedle() {
-  if (!audioMain.duration) return;
-  const pct = audioMain.currentTime / audioMain.duration;
+  const active = getActiveAudio();
+  if (!active || !active.duration) return;
+  const pct = active.currentTime / active.duration;
   const W   = playerStage.clientWidth;
   needle.style.left = `${clamp(pct * W, 0, W - 1)}px`;
 }
@@ -468,22 +477,47 @@ function updateMuteIcon() {
 }
 
 function syncProgress() {
-  if (!audioMain.duration) return;
-  const pct = (audioMain.currentTime / audioMain.duration) * 100;
+  const active = getActiveAudio();
+  if (!active || !active.duration) return;
+  const pct = (active.currentTime / active.duration) * 100;
   progressBar.value = pct;
-  timeCurrent.textContent = fmt(audioMain.currentTime);
-  timeTotal.textContent   = fmt(audioMain.duration);
+  timeCurrent.textContent = fmt(active.currentTime);
+  timeTotal.textContent   = fmt(active.duration);
 }
 
-audioMain.addEventListener("timeupdate", syncProgress);
-audioMain.addEventListener("loadedmetadata", () => {
-  timeTotal.textContent = fmt(audioMain.duration);
-  progressBar.max = 100;
+audioMain.addEventListener("timeupdate", () => {
+  if (!state.isThenVsNow) syncProgress();
 });
+audioTvn.addEventListener("timeupdate", () => {
+  if (state.isThenVsNow) syncProgress();
+});
+
+audioMain.addEventListener("loadedmetadata", () => {
+  if (!state.isThenVsNow) {
+    timeTotal.textContent = fmt(audioMain.duration);
+    progressBar.max = 100;
+  }
+});
+audioTvn.addEventListener("loadedmetadata", () => {
+  if (state.isThenVsNow) {
+    timeTotal.textContent = fmt(audioTvn.duration);
+    progressBar.max = 100;
+  }
+});
+
 audioMain.addEventListener("ended", () => {
-  state.isPlaying = false;
-  updatePlayBtn();
-  stopNeedleLoop();
+  if (!state.isThenVsNow) {
+    state.isPlaying = false;
+    updatePlayBtn();
+    stopNeedleLoop();
+  }
+});
+audioTvn.addEventListener("ended", () => {
+  if (state.isThenVsNow) {
+    state.isPlaying = false;
+    updatePlayBtn();
+    stopNeedleLoop();
+  }
 });
 
 /* ════════════════════════════════════════════════════════════
@@ -563,6 +597,11 @@ async function loadRecord(record) {
 
   if (record.thenVsNow && record.thenVsNowAudio) {
     audioTvn.src = record.thenVsNowAudio;
+    audioTvn.onerror = () => {
+      if (audioTvn.src.endsWith(".mp3")) {
+        audioTvn.src = audioTvn.src.replace(/\.mp3$/, ".wav");
+      }
+    };
     audioTvn.load();
   }
 
@@ -570,15 +609,20 @@ async function loadRecord(record) {
 }
 
 function play() {
-  const playPromise = audioMain.play();
+  const active = getActiveAudio();
+  const inactive = getInactiveAudio();
+  inactive.pause();
+
+  const playPromise = active.play();
   if (playPromise !== undefined) {
     playPromise
       .then(() => {
         state.isPlaying = true;
         updatePlayBtn();
         startNeedleLoop();
-        if (hudStatus) hudStatus.textContent = "SWEEP ACTIVE";
-        if (state.isThenVsNow) audioTvn.play().catch(() => {});
+        if (hudStatus) {
+          hudStatus.textContent = state.isThenVsNow ? "DUAL-EPOCH COMPARISON" : "SWEEP ACTIVE";
+        }
       })
       .catch((err) => {
         // Browser autoplay policy or missing local mp3
@@ -628,15 +672,29 @@ function toggleThenVsNow() {
   }
 
   if (hudStatus) {
-    hudStatus.textContent = state.isThenVsNow ? "DUAL-EPOCH COMPARISON" : "SPECTRAL LOCK";
+    hudStatus.textContent = state.isThenVsNow ? "DUAL-EPOCH COMPARISON" : (state.isPlaying ? "SWEEP ACTIVE" : "STANDBY");
   }
 
   if (state.isThenVsNow) {
-    audioTvn.currentTime = audioMain.currentTime;
-    if (state.isPlaying) audioTvn.play().catch(() => {});
+    // Switch exclusively from audioMain to audioTvn
+    if (audioMain.duration) {
+      audioTvn.currentTime = audioMain.currentTime;
+    }
+    audioMain.pause();
+    if (state.isPlaying) {
+      audioTvn.play().catch((err) => console.debug("TVN play error:", err));
+    }
   } else {
+    // Switch exclusively from audioTvn to audioMain
+    if (audioTvn.duration) {
+      audioMain.currentTime = audioTvn.currentTime;
+    }
     audioTvn.pause();
+    if (state.isPlaying) {
+      audioMain.play().catch((err) => console.debug("Main play error:", err));
+    }
   }
+  syncProgress();
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -668,18 +726,26 @@ document.addEventListener("keydown", (e) => {
       e.preventDefault();
       if (state.currentRecord) togglePlay();
       break;
-    case "ArrowLeft":
-      if (audioMain.duration) {
-        audioMain.currentTime = Math.max(0, audioMain.currentTime - 5);
-        if (state.isThenVsNow) audioTvn.currentTime = audioMain.currentTime;
+    case "ArrowLeft": {
+      const active = getActiveAudio();
+      if (active.duration) {
+        active.currentTime = Math.max(0, active.currentTime - 5);
+        const inactive = getInactiveAudio();
+        if (inactive.duration) inactive.currentTime = active.currentTime;
+        syncProgress();
       }
       break;
-    case "ArrowRight":
-      if (audioMain.duration) {
-        audioMain.currentTime = Math.min(audioMain.duration, audioMain.currentTime + 5);
-        if (state.isThenVsNow) audioTvn.currentTime = audioMain.currentTime;
+    }
+    case "ArrowRight": {
+      const active = getActiveAudio();
+      if (active.duration) {
+        active.currentTime = Math.min(active.duration, active.currentTime + 5);
+        const inactive = getInactiveAudio();
+        if (inactive.duration) inactive.currentTime = active.currentTime;
+        syncProgress();
       }
       break;
+    }
     case "ArrowUp":
       e.preventDefault();
       volumeBar.value = String(clamp(parseFloat(volumeBar.value) + 0.1, 0, 1));
@@ -764,10 +830,15 @@ volumeBar.addEventListener("input", () => {
 });
 
 progressBar.addEventListener("input", () => {
-  if (!audioMain.duration) return;
-  const t = (parseFloat(progressBar.value) / 100) * audioMain.duration;
-  audioMain.currentTime = t;
-  if (state.isThenVsNow) audioTvn.currentTime = t;
+  const active = getActiveAudio();
+  if (!active.duration) return;
+  const t = (parseFloat(progressBar.value) / 100) * active.duration;
+  active.currentTime = t;
+  const inactive = getInactiveAudio();
+  if (inactive.duration) {
+    inactive.currentTime = t;
+  }
+  syncProgress();
 });
 
 /* ════════════════════════════════════════════════════════════

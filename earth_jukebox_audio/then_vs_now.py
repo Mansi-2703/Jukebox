@@ -497,10 +497,10 @@ def _combine_stereo(signal_a: np.ndarray, signal_b: np.ndarray) -> np.ndarray:
     len_b = stereo_b.shape[1]
     out_len = max(len_a, len_b)
 
-    # Use shared mix_into helper for channel mixing
+    # Direct channel assignment (Left = A, Right = B)
     combined = np.zeros((2, out_len), dtype=np.float32)
-    mix_into(combined[0:1], stereo_a[0:1], 0)
-    mix_into(combined[1:2], stereo_b[1:2], 0)
+    combined[0, :len_a] = stereo_a[0]
+    combined[1, :len_b] = stereo_b[1]
 
     return combined
 
@@ -590,13 +590,13 @@ def main() -> None:
     print(f"Rendering with: {backend_name}")
 
     # --- Steps 8 & 9: Render A and B events to audio signals ----------------
-    # Each render call returns a numpy array (mono or stereo) for its channel.
-    signal_a: np.ndarray = renderer.render(
-        all_notes_a, config, sample_rate=SAMPLE_RATE
-    )
-    signal_b: np.ndarray = renderer.render(
-        all_notes_b, config, sample_rate=SAMPLE_RATE
-    )
+    total_duration = n_frames * frame_duration
+    if backend_name == "fluidsynth":
+        signal_a = renderer.render_with_fluidsynth(all_notes_a, total_duration, config)
+        signal_b = renderer.render_with_fluidsynth(all_notes_b, total_duration, config)
+    else:
+        signal_a = renderer.render_to_array(all_notes_a, total_duration, sample_rate=SAMPLE_RATE)
+        signal_b = renderer.render_to_array(all_notes_b, total_duration, sample_rate=SAMPLE_RATE)
 
     # --- Step 10: Combine into one stereo track (left=A, right=B) -----------
     combined: np.ndarray = _combine_stereo(signal_a, signal_b)
