@@ -1314,13 +1314,13 @@ function handleCustomVideo(file) {
   const customRecord = {
     id: "byo_earth",
     title: cleanName || "CUSTOM EARTH OBSERVATION",
-    subtitle: `Live Optical Sonification (${mbSize} MB)`,
+    subtitle: `Live Optical Sonification · ${mbSize} MB`,
     tag: "BYO-LIVE",
     catalog: "USER OBSERVATION",
-    instrument: "Client Frame Extractor (features.js)",
-    soundRole: "Real-Time Web Audio Synthesis (synth.js)",
-    description: `Custom video payload [${file.name}] mounted into live client-side pipeline. Video frames are dynamically downsampled to 640×360 and analyzed in real-time for optical luminance, dominant hue, 32 spatial strip profiles, and inter-frame motion.`,
-    soundDescription: "Person B's Web Audio synthesizer generates sound in real time: dominant hue sets the pentatonic scale, horizontal column luminance pans across 32 stereo positions (-1.0 to +1.0), vertical column heights drive pitch offsets, and temporal motion modulates transient duration and rhythmic density.",
+    instrument: "Live Optical Sensor",
+    soundRole: "Real-Time Acoustic Synthesis",
+    description: `Your video is being analyzed frame-by-frame for optical luminance, dominant color, and spatial motion. Each frame is downsampled to 640×360 and mapped to 32 horizontal strips that drive the sonification in real time.`,
+    soundDescription: `Luminance controls filter brightness, dominant hue selects the harmonic scale, column heights drive pitch across the stereo field, and motion intensity shapes the rhythm and transient density of the generated sound.`,
     color: "#38bdf8",
     thenVsNow: false
   };
@@ -1402,7 +1402,7 @@ function extractAndSonifyCurrentFrame(sec) {
   state.liveFrames[sec] = features;
   state.features = { frames: [features] };
 
-  // Person B's synthesizer sonifies the frame in real time
+  // Synthesizer sonifies the frame in real time
   playFrame(features, sec, Math.ceil(byoVideo.duration || 1));
 
   // Render live visualization over the player stage
@@ -1438,7 +1438,7 @@ function drawLiveSpectrogram(features) {
     ctx2d.fillRect(Math.floor(x) + 1, Math.floor(y), Math.ceil(colW) - 1, Math.ceil(h));
   }
 
-  // ── Overlay Live Audio Waveform from Person B's Master AnalyserNode ──
+  // ── Overlay Live Audio Waveform from Master AnalyserNode ──
   const analyser = getAudioAnalyser();
   if (analyser) {
     const bufLen = analyser.frequencyBinCount;
