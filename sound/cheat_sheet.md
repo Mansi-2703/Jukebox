@@ -1,3 +1,38 @@
+# Mapping Cheat Sheet (Person B — Sound Engine)
+
+Scales, instruments, and feature-to-sound rules for "Earth Jukebox: The Planet's Record Collection".
+
+## The Core Mappings
+1. **Left to Right = Time & Stereo Pan**
+   - The glowing needle sweeps across each frame duration.
+   - Per-vertical-strip position maps directly to stereo pan: leftmost strip = -1.0 (hard left), rightmost strip = +1.0 (hard right).
+2. **Top to Bottom = Pitch**
+   - `column_heights` (or strip brightness if absent) sets pitch (higher value = higher register).
+   - Quantized to the configured musical scale so it is always harmonic.
+3. **Brightness = Volume (Velocity)**
+   - Strip brightness multiplied by frame brightness sets velocity (loudness).
+   - Silence threshold: strips below 0.05 brightness are treated as silent.
+4. **Hue = Timbre (Instrument Family)**
+   - Warm hues (0–60° and 300–360°): Strings & bells (triangle waves with bell-like envelope).
+   - Cool hues (180–270°): Soft pads (sine waves with 2 kHz lowpass filter).
+   - Other hues: Blend (warm marimba-like mixture of sine and triangle).
+   - Rule: For strips with brightness below 0.05, hue falls back to overall frame hue.
+5. **Motion = Rhythm Density**
+   - Higher frame motion increases the number of concurrent notes (up to 4).
+6. **Max Polyphony & Reverb**
+   - At most 4 simultaneous notes per frame (top brightest strips).
+   - Gentle Schroeder reverb and smoothed velocity envelopes prevent harshness or clicking.
+
+## The Four Records
+- **night_lights**: Soft plucked/mallet tones, steady pulse following brightness and motion, gentle chord pad underneath when saturated.
+- **lightning**: Sparse, snappy percussion triggered by brightness/motion spikes, stereo localized to flash strip, silent during quiet frames.
+- **ocean_currents**: Evolving pads, long overlapping notes, slow swells, slowly shifting pitch, turbulence suppresses notes for smooth texture.
+- **gedi_forest**: Clear melodic contour where canopy height maps directly to pitch over a soft pad.
+
+## Then vs Now Mode (2012 vs 2023)
+- Left ear = 2012, Right ear = 2023.
+- Growth (2023 brighter than 2012) adds richer harmonic chord extensions.
+- Sharp contrasts add a subtle, quiet dissonant accent (minor second or tritone) to highlight significant change.
 # Sound Mapping Cheat Sheet — Person B
 
 ## 1. Musical Scale

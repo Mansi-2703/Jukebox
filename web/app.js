@@ -2,7 +2,12 @@
 // Audio-visual spectrogram coordination, probe mechanics, and spatialization.
 
 import { extractFeatures } from "./features.js";
-import { playFrame, stopAll, setMasterVolume, setMuted, getAudioContext } from "./synth.js";
+import {
+  initAudio, playFrame, stopAll,
+  setMasterVolume, setMuted, getAudioContext,
+  getAudioAnalyser,
+  setInstrumentPreset, getInstrumentPreset, getAvailableInstruments,
+} from "./synth.js";
 
 /* ════════════════════════════════════════════════════════════
    0. State Management
@@ -66,6 +71,9 @@ const shortcutsOverlay  = document.getElementById("shortcuts-overlay");
 const btnCloseShortcuts = document.getElementById("btn-close-shortcuts");
 const btnHelp           = document.getElementById("btn-help");
 const footerShortcutsBtn = document.getElementById("footer-shortcuts-btn");
+
+/* Instrument Preset Selector (B2/B3) */
+const instrumentSelect  = document.getElementById("instrument-select");
 
 /* Bring Your Own Earth custom elements */
 const byoVideo          = document.getElementById("byo-video");
@@ -677,7 +685,7 @@ async function loadRecord(record) {
 
 function play() {
   if (state.isCustomMode) {
-    getAudioContext();
+    initAudio();   // ensure AudioContext is created/resumed on user gesture
     byoVideo.play().then(() => {
       state.isPlaying = true;
       updatePlayBtn();
@@ -1126,6 +1134,31 @@ function drawLiveSpectrogram(features) {
     ctx2d.globalAlpha = clamp(b * 0.85 + 0.15, 0.15, 0.95);
     ctx2d.fillRect(Math.floor(x) + 1, Math.floor(y), Math.ceil(colW) - 1, Math.ceil(h));
   }
+
+  // ── Overlay Live Audio Waveform from Person B's Master AnalyserNode ──
+  const analyser = getAudioAnalyser();
+  if (analyser) {
+    const bufLen = analyser.frequencyBinCount;
+    const timeData = new Uint8Array(bufLen);
+    analyser.getByteTimeDomainData(timeData);
+
+    ctx2d.beginPath();
+    ctx2d.strokeStyle = "#38bdf8";
+    ctx2d.lineWidth = 2;
+    ctx2d.globalAlpha = 0.85;
+
+    const midY = H * 0.35; // Position waveform in upper third
+    const waveH = H * 0.25;
+
+    for (let i = 0; i < bufLen; i++) {
+      const vx = (i / bufLen) * W;
+      const vy = midY + ((timeData[i] / 128) - 1) * waveH;
+      if (i === 0) ctx2d.moveTo(vx, vy);
+      else ctx2d.lineTo(vx, vy);
+    }
+    ctx2d.stroke();
+  }
+
   ctx2d.globalAlpha = 1.0;
 }
 
@@ -1275,6 +1308,28 @@ function init() {
 
   volumeBar.value = "1";
   syncVolume();
+
+  // Populate and bind Instrument Preset Selector (B2/B3)
+  if (instrumentSelect) {
+    const instruments = getAvailableInstruments();
+    instrumentSelect.innerHTML = "";
+    instruments.forEach((inst) => {
+      const opt = document.createElement("option");
+      opt.value = inst.id;
+      opt.textContent = inst.name.toUpperCase();
+      instrumentSelect.appendChild(opt);
+    });
+    instrumentSelect.value = getInstrumentPreset();
+
+    instrumentSelect.addEventListener("change", (e) => {
+      const id = e.target.value;
+      setInstrumentPreset(id);
+      const chosen = instruments.find((i) => i.id === id);
+      if (hudStatus && chosen) {
+        hudStatus.textContent = `PRESET ARMED // ${chosen.name.toUpperCase()}`;
+      }
+    });
+  }
 
   // Bring Your Own Earth file input handler
   if (byoFileInput) {

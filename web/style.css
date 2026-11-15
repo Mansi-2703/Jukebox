@@ -992,6 +992,45 @@ input[type="range"].volume-bar::-webkit-slider-thumb {
   cursor: pointer;
 }
 
+/* ───── Instrument Preset Selector ───── */
+.instrument-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.2rem 0.5rem;
+  background: rgba(12, 16, 23, 0.85);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  flex-shrink: 0;
+}
+.instrument-label {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--accent-cyan);
+}
+.instrument-select {
+  background: transparent;
+  border: none;
+  color: var(--text-main);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  outline: none;
+  cursor: pointer;
+  padding: 0.15rem 0.25rem;
+}
+.instrument-select option {
+  background: var(--bg-card);
+  color: var(--text-main);
+}
+.instrument-select:focus-visible {
+  outline: 1px solid var(--accent-cyan);
+  border-radius: var(--radius-xs);
+}
+
 /* Specialized Console Modes */
 .btn-mode {
   display: flex;
