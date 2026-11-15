@@ -1,0 +1,18 @@
+{
+  "record": "lightning",
+  "scale": "C_major_pentatonic",
+  "tempo_bpm": 120,
+  "instrument": "xylophone",
+  "instrument_midi_program": 13,
+  "pad_instrument": "none",
+  "pad_instrument_midi_program": null,
+  "mapping_weights": {
+    "brightness_to_velocity": 1.5,
+    "motion_to_note_density": 1.5,
+    "edges_to_accent": 1.0,
+    "saturation_to_pad_volume": 0.0
+  },
+  "max_simultaneous_notes": 2,
+  "reverb_amount": 0.1,
+  "description": "Sparse percussion hits triggered by brightness/motion spikes, stereo from strip position"
+}
