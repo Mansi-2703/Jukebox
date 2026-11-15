@@ -32,7 +32,8 @@ Each NASA visualization functions as a high-density sonification record. A preci
 
 - **Then vs Now Epoch Comparison** (Night Lights): Concurrently renders 2012 baseline against 2023 epoch data. Where electrification and urban centers expanded, the acoustic texture resolves into richer harmonic overtones; regions experiencing light reduction introduce localized dissonant intervals.
 - **Spectral Coordinate Probe**: Touch or hover any geographic coordinate on the spectrogram stage to audit localized vertical column telemetry through a dedicated Web Audio synthesis oscillator. Accessible via mouse, touch, or directional keyboard navigation.
-- **Scientific Dossiers**: Plain-text acoustic and scientific descriptive telemetry tailored for accessibility screen readers and technical reference.
+- **Bring Your Own Earth (Dynamic Live Sonification)**: Drop or browse any NASA MP4/WebM Earth observation video into the console. The browser downscales each frame to 640×360, extracts optical radiance, dominant hue, 32 spatial column strips, and motion, and translates them into live polyphonic Web Audio synthesis in real time with an interactive HUD view switcher (`OVERLAY`, `VIDEO`, `SPECTROGRAM`).
+- **Scientific Dossiers & Accessibility**: Plain-text acoustic and scientific descriptive telemetry tailored for screen readers, high-contrast HUD design, semantic ARIA live regions, and full keyboard console shortcuts.
 
 ---
 
@@ -64,16 +65,29 @@ earth-jukebox/
 │   ├── cheat_sheet.md      # Mathematical tuning & instrument assignment matrix
 │   ├── generate.py         # Primary MIDI & audio generation pipeline
 │   └── then_vs_now.py      # Differential epoch mix engine
-├── audio/                  # Master acoustic exports (.mp3) (Person B → C)
+├── audio/                  # Master acoustic exports (.mp3 / .wav) (Person B → C)
 ├── web/                    # Mission Control Sonification Console (Person C)
 │   ├── index.html          # Semantic HTML5 console
 │   ├── style.css           # Mission-grade responsive workstation stylesheet
-│   ├── app.js              # Audio graph, needle synchronization, & probe engine
+│   ├── app.js              # Audio graph, needle synchronization, & BYO orchestrator
+│   ├── features.js         # Client-side video frame optical feature extractor (Person A)
+│   ├── synth.js            # Real-time Web Audio polyphonic synthesizer (Person B)
 │   └── records.js          # Catalog manifest & metadata schema
 └── docs/
     ├── descriptions.md     # Narrative telemetry & accessibility transcripts
     └── credits.md          # NASA SVS attribution & scientific licenses
 ```
+
+---
+
+## 2-Minute Demo Video Recording Guide
+
+When recording the submission demo video:
+1. **0:00–0:25 — Concept & Console Overview**: Introduce Earth Jukebox as a planet record collection. Show the 4 curated records on the shelf. Mount **Night Lights** and hit `Space` to initiate playback. Point out the glowing needle sweep across the spectrogram, binaural panning (left to right), and the HUD telemetry.
+2. **0:25–0:50 — Then vs Now Mode**: Press `T` or click **THEN VS NOW**. Show the dual-epoch stacked visualizer (2012 Baseline vs 2023 Delta) and explain how urban growth becomes audible as rich harmonic chords, while decline sounds as dissonant tension.
+3. **0:50–1:15 — Touch the Earth Probe**: Press `P` or click **PROBE**. Hover across latitudes on the visualizer to show coordinate pitch readout in Hz and trigger localized acoustic probing for sight-impaired exploration.
+4. **1:15–1:45 — Bring Your Own Earth**: Drag and drop any custom NASA video onto the 5th record sleeve. Show real-time browser frame extraction (`features.js`), live Web Audio synthesis (`synth.js`), and cycle through HUD view modes (`OVERLAY` → `VIDEO` → `SPECTROGRAM`).
+5. **1:45–2:00 — Accessibility & Closing**: Press `?` to open the console hardware key reference. Conclude on how multisensory sonification makes NASA Earth observation accessible to all audiences.
 
 ---
 
