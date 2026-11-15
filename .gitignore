@@ -1,0 +1,4 @@
+data/videos/
+data/frames/
+__pycache__/
+*.pyc
