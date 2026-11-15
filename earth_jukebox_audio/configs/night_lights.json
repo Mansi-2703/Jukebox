@@ -1,0 +1,18 @@
+{
+  "record": "night_lights",
+  "scale": "C_major_pentatonic",
+  "tempo_bpm": 90,
+  "instrument": "marimba",
+  "instrument_midi_program": 12,
+  "pad_instrument": "strings",
+  "pad_instrument_midi_program": 48,
+  "mapping_weights": {
+    "brightness_to_velocity": 1.0,
+    "motion_to_note_density": 1.0,
+    "edges_to_accent": 0.5,
+    "saturation_to_pad_volume": 0.8
+  },
+  "max_simultaneous_notes": 4,
+  "reverb_amount": 0.25,
+  "description": "Soft mallet tones, density follows brightness and motion, chord pads underneath"
+}

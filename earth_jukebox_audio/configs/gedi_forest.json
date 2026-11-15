@@ -1,0 +1,18 @@
+{
+  "record": "gedi_forest",
+  "scale": "C_major_pentatonic",
+  "tempo_bpm": 75,
+  "instrument": "marimba",
+  "instrument_midi_program": 12,
+  "pad_instrument": "pad_warm",
+  "pad_instrument_midi_program": 89,
+  "mapping_weights": {
+    "brightness_to_velocity": 0.8,
+    "motion_to_note_density": 0.5,
+    "edges_to_accent": 0.3,
+    "saturation_to_pad_volume": 0.7
+  },
+  "max_simultaneous_notes": 4,
+  "reverb_amount": 0.3,
+  "description": "Clear melodic line from canopy height (column_heights -> pitch), marimba/flute over soft pad"
+}

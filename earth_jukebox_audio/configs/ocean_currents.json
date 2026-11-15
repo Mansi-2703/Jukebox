@@ -1,0 +1,18 @@
+{
+  "record": "ocean_currents",
+  "scale": "C_major_pentatonic",
+  "tempo_bpm": 60,
+  "instrument": "pad_warm",
+  "instrument_midi_program": 89,
+  "pad_instrument": "pad_choir",
+  "pad_instrument_midi_program": 91,
+  "mapping_weights": {
+    "brightness_to_velocity": 0.6,
+    "motion_to_note_density": 0.3,
+    "edges_to_accent": 0.1,
+    "saturation_to_pad_volume": 1.0
+  },
+  "max_simultaneous_notes": 4,
+  "reverb_amount": 0.5,
+  "description": "Long overlapping pads, slow swells, slowly shifting pitch, little percussion"
+}

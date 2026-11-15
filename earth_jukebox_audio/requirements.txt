@@ -1,0 +1,16 @@
+# Earth Jukebox Audio — Python dependencies
+# Install with: pip install -r requirements.txt
+
+pretty_midi
+numpy
+scipy
+pydub
+soundfile
+midiutil
+
+# FluidSynth is optional and must be installed separately (system package).
+# On macOS:  brew install fluidsynth
+# On Ubuntu: sudo apt install fluidsynth
+# On Windows: https://github.com/FluidSynth/fluidsynth/releases
+# After installing FluidSynth, also install the Python binding:
+#   pip install pyfluidsynth
