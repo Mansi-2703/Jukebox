@@ -797,10 +797,24 @@ function syncProgress() {
 }
 
 audioMain.addEventListener("timeupdate", () => {
-  if (!state.isThenVsNow && !state.isCustomMode) syncProgress();
+  if (!state.isThenVsNow && !state.isCustomMode) {
+    syncProgress();
+    if (byoVideo && !byoVideo.hidden && byoVideo.readyState >= 2) {
+      if (Math.abs(byoVideo.currentTime - audioMain.currentTime) > 0.35) {
+        byoVideo.currentTime = audioMain.currentTime;
+      }
+    }
+  }
 });
 audioTvn.addEventListener("timeupdate", () => {
-  if (state.isThenVsNow && !state.isCustomMode) syncProgress();
+  if (state.isThenVsNow && !state.isCustomMode) {
+    syncProgress();
+    if (byoVideo && !byoVideo.hidden && byoVideo.readyState >= 2) {
+      if (Math.abs(byoVideo.currentTime - audioTvn.currentTime) > 0.35) {
+        byoVideo.currentTime = audioTvn.currentTime;
+      }
+    }
+  }
 });
 
 audioMain.addEventListener("loadedmetadata", () => {
@@ -937,6 +951,26 @@ async function loadRecord(record) {
   };
   audioMain.load();
 
+  // Mount video pipeline for curated NASA observation
+  if (record.video) {
+    byoVideo.hidden = false;
+    byoVideo.src = record.video;
+    byoVideo.muted = true;
+    byoVideo.currentTime = 0;
+    byoVideo.load();
+    state.customViewMode = "overlay";
+    playerStage.className = "player-stage view-overlay";
+    if (btnViewToggle) {
+      btnViewToggle.hidden = false;
+      btnViewToggle.textContent = "VIEW: OVERLAY";
+    }
+  } else {
+    byoVideo.hidden = true;
+    byoVideo.src = "";
+    if (btnViewToggle) btnViewToggle.hidden = true;
+    playerStage.className = "player-stage";
+  }
+
   if (record.thenVsNow && record.thenVsNowAudio) {
     audioTvn.src = record.thenVsNowAudio;
     audioTvn.onerror = () => {
@@ -999,6 +1033,9 @@ function play() {
         updatePlayBtn();
         startNeedleLoop();
         startTelemetryLoop();
+        if (byoVideo && !byoVideo.hidden && byoVideo.src) {
+          byoVideo.play().catch(() => {});
+        }
         if (hudStatus) {
           hudStatus.textContent = state.isThenVsNow ? "DUAL-EPOCH COMPARISON" : "SWEEP ACTIVE";
         }
@@ -1027,6 +1064,9 @@ function pause() {
 
   audioMain.pause();
   audioTvn.pause();
+  if (byoVideo && !byoVideo.hidden) {
+    byoVideo.pause();
+  }
   state.isPlaying = false;
   updatePlayBtn();
   stopNeedleLoop();
@@ -1134,6 +1174,7 @@ document.addEventListener("keydown", (e) => {
         active.currentTime = Math.max(0, active.currentTime - 5);
         const inactive = getInactiveAudio();
         if (inactive.duration) inactive.currentTime = active.currentTime;
+        if (byoVideo && !byoVideo.hidden) byoVideo.currentTime = active.currentTime;
         syncProgress();
       }
       break;
@@ -1155,6 +1196,7 @@ document.addEventListener("keydown", (e) => {
         active.currentTime = Math.min(active.duration, active.currentTime + 5);
         const inactive = getInactiveAudio();
         if (inactive.duration) inactive.currentTime = active.currentTime;
+        if (byoVideo && !byoVideo.hidden) byoVideo.currentTime = active.currentTime;
         syncProgress();
       }
       break;
@@ -1261,6 +1303,9 @@ progressBar.addEventListener("input", () => {
   const inactive = getInactiveAudio();
   if (inactive.duration) {
     inactive.currentTime = t;
+  }
+  if (byoVideo && !byoVideo.hidden) {
+    byoVideo.currentTime = t;
   }
   syncProgress();
 });
@@ -1481,10 +1526,23 @@ function buildShelf() {
 
     card.innerHTML = `
       <div class="record-card__cover">
+        <video
+          class="record-card__video"
+          src="${rec.video}"
+          poster="${rec.image}"
+          muted
+          loop
+          playsinline
+          autoplay
+          preload="metadata"
+          onerror="if(!this.dataset.retried){this.dataset.retried='1'; this.src = this.getAttribute('src').startsWith('../') ? this.getAttribute('src').slice(3) : ('../' + this.getAttribute('src'));} else { this.style.display='none'; const fallback = this.parentElement.querySelector('img'); if(fallback) fallback.style.display='block'; }"
+        ></video>
         <img
           src="${rec.image}"
+          class="record-card__img"
           alt="${rec.title} scientific observation map"
           loading="${idx === 0 ? 'eager' : 'lazy'}"
+          style="display:none;"
           onerror="if(!this.dataset.retried){this.dataset.retried='1'; this.src = this.getAttribute('src').startsWith('../') ? this.getAttribute('src').slice(3) : ('../' + this.getAttribute('src'));} else { this.style.display='none'; }"
         />
         <div class="record-card__overlay"></div>
@@ -1514,6 +1572,17 @@ function buildShelf() {
         </div>
       </div>
     `;
+
+    // Ensure card video plays continuously
+    const cardVideo = card.querySelector("video");
+    if (cardVideo) {
+      cardVideo.play().catch(() => {});
+    }
+    card.addEventListener("mouseenter", () => {
+      if (cardVideo && cardVideo.paused) {
+        cardVideo.play().catch(() => {});
+      }
+    });
 
     card.addEventListener("click", () => loadRecord(rec));
     card.addEventListener("keydown", (e) => {
@@ -1653,7 +1722,6 @@ function init() {
   // View toggle button handler (overlay -> video -> spectrogram)
   if (btnViewToggle) {
     btnViewToggle.addEventListener("click", () => {
-      if (!state.isCustomMode) return;
       const modes = ["overlay", "video", "spectrogram"];
       const nextIdx = (modes.indexOf(state.customViewMode) + 1) % modes.length;
       state.customViewMode = modes[nextIdx];

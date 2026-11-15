@@ -1,5 +1,7 @@
 # Large Media & Extraction Artifacts
 data/videos/
+web/data/videos/
+!web/data/videos/.gitkeep
 data/frames/
 data/features/crop_check/
 
