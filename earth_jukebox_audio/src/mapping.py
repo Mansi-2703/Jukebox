@@ -71,13 +71,15 @@ class NoteEvent:
 
     Attributes
     ----------
-    time       : seconds from track start (set by frame["t"])
-    duration   : note hold time in seconds
-    pitch      : MIDI note number (0–127)
-    velocity   : MIDI velocity (0–127); encodes loudness
-    pan        : stereo position, -1.0 = hard-left, +1.0 = hard-right
-    instrument : instrument family string (e.g. "strings_bells")
-    channel    : MIDI channel (0–15); lets the renderer multiplex voices
+    time          : seconds from track start (set by frame["t"])
+    duration      : note hold time in seconds
+    pitch         : MIDI note number (0–127)
+    velocity      : MIDI velocity (0–127); encodes loudness
+    pan           : stereo position, -1.0 = hard-left, +1.0 = hard-right
+    instrument    : instrument family string (e.g. "strings_bells")
+    channel       : MIDI channel (0–15); lets the renderer multiplex voices
+    source_strip  : index of the source strip (0 to n_strips - 1), or -1 if pad
+    column_height : height value used for pitch (0–1)
     """
     time: float
     duration: float
@@ -86,6 +88,31 @@ class NoteEvent:
     pan: float
     instrument: str
     channel: int
+    source_strip: int = -1
+    column_height: float = 0.5
+
+
+def find_strip_properties(frames: list[dict]) -> tuple[set[int], set[int]]:
+    """
+    Identify strips that are zero in every frame, and strips that are
+    constant across all frames.
+
+    Returns
+    -------
+    (zero_strips, constant_strips)
+    """
+    if not frames:
+        return set(), set()
+    n_strips = len(frames[0].get("columns", []))
+    zero_strips = set()
+    constant_strips = set()
+    for i in range(n_strips):
+        vals = [f.get("columns", [])[i] for f in frames if len(f.get("columns", [])) > i]
+        if all(v == 0.0 or v <= 0.05 for v in vals):
+            zero_strips.add(i)
+        elif len(set(vals)) == 1:
+            constant_strips.add(i)
+    return zero_strips, constant_strips
 
 
 # ---------------------------------------------------------------------------
@@ -97,27 +124,28 @@ def frame_to_notes(
     frame_duration: float,
     config: dict,
     scale_name: str,
+    constant_strips: set[int] = None,
+    is_retrigger: bool = False,
 ) -> List[NoteEvent]:
     """
     Convert one validated frame dict into a list of NoteEvents.
 
     Parameters
     ----------
-    frame          : validated frame dict (loader.py schema).
-    frame_duration : wall-clock length of this frame in seconds (e.g. 1 / fps).
-    config         : record config dict (e.g. loaded from configs/night_lights.json).
-    scale_name     : scale key understood by scales.quantize().
+    frame           : validated frame dict (loader.py schema).
+    frame_duration  : wall-clock length of this frame in seconds (e.g. 1 / fps).
+    config          : record config dict (e.g. loaded from configs/night_lights.json).
+    scale_name      : scale key understood by scales.quantize().
+    constant_strips : set of strip indices that are constant across all frames.
+    is_retrigger    : whether this frame is after frame 0 (so constant strips are not re-triggered).
 
     Returns
     -------
-    List of NoteEvent objects, possibly empty (e.g. lightning silence threshold).
+    List of NoteEvent objects, at most max_simultaneous_notes (default 4).
     """
 
     # ------------------------------------------------------------------
     # Step 1 — Extract all fields from the frame.
-    #
-    # loader.py guarantees these keys with defaults, so we use .get()
-    # only as a safety net for running this module standalone.
     # ------------------------------------------------------------------
     columns: list        = frame.get("columns", [])          # per-strip brightness values (0–1)
     column_heights: list = frame.get("column_heights", [])   # per-strip "height" feature (0–1)
@@ -138,95 +166,85 @@ def frame_to_notes(
     column_heights = _pad_to(column_heights, n_strips, default=0.5)
     column_hues    = _pad_to(column_hues,    n_strips, default=hue)
 
+    # Rule: For strips with brightness below 0.05, the hue used equals the frame hue
+    effective_strip_hues = []
+    for i in range(n_strips):
+        if columns[i] < 0.05:
+            effective_strip_hues.append(hue)
+        else:
+            effective_strip_hues.append(float(column_hues[i]))
+    frame["effective_strip_hues"] = effective_strip_hues
+
     # ------------------------------------------------------------------
     # Step 2 — Select top-N strips by per-strip brightness.
     #
     # N comes from config["max_simultaneous_notes"] (default 4).
-    # We also enforce a silence threshold: strips dimmer than 0.05 are
-    # treated as "off" and excluded entirely to avoid mud.
+    # Silence threshold: strips dimmer than 0.05 are treated as off.
+    # Constant strips across all frames are not re-triggered on frames t > 0.
     # ------------------------------------------------------------------
     max_notes: int = int(config.get("max_simultaneous_notes", 4))
-    silence_threshold: float = 0.05  # strips below this brightness are silent
+    silence_threshold: float = 0.05
 
-    # Build (strip_brightness, original_index) pairs and sort descending
-    indexed = sorted(
-        ((columns[i], i) for i in range(n_strips) if columns[i] > silence_threshold),
-        key=lambda x: x[0],
-        reverse=True,
-    )
-    # Keep at most max_notes candidates before motion-density re-filter
+    candidate_strips = []
+    for i in range(n_strips):
+        b = columns[i]
+        if b <= silence_threshold:
+            continue
+        # Check 8: Strips that are constant across all frames are not re-triggered every frame
+        if is_retrigger and constant_strips and (i in constant_strips):
+            continue
+        candidate_strips.append((b, i))
+
+    # If all dynamic strips are quiet on a retrigger frame, allow the strongest
+    # strip to prevent unnatural complete silence if brightness > 0.1
+    if not candidate_strips and is_retrigger and brightness > 0.1:
+        for i in range(n_strips):
+            if columns[i] > silence_threshold:
+                candidate_strips.append((columns[i], i))
+                break
+
+    indexed = sorted(candidate_strips, key=lambda x: x[0], reverse=True)
     top_candidates = indexed[:max_notes]
 
     # ------------------------------------------------------------------
     # Step 3 — Record-level gate: lightning only fires on bright/active frames.
-    #
-    # Doing this before the per-strip loop avoids allocating NoteEvents
-    # that will immediately be discarded.
     # ------------------------------------------------------------------
     record: str = config.get("record", "")
 
     if record == "lightning":
-        # Lightning: silence everything unless a brightness OR motion spike
-        # occurs.  This creates the characteristic "sudden burst" texture.
         if brightness <= 0.3 and motion <= 0.3:
             return []
 
     # ------------------------------------------------------------------
-    # Step 5 (applied before the loop) — Motion-based note density.
-    #
-    # More motion → more simultaneous notes → busier, more energetic
-    # texture.  Still frames stay sparse and calm.
-    #   motion_factor ∈ [0.3, 1.0]
-    #   actual_n     ∈ [1, max_notes]
+    # Step 5 — Motion-based note density.
     # ------------------------------------------------------------------
     motion_factor: float = 0.3 + motion * 0.7
     actual_n: int = max(1, int(max_notes * motion_factor))
-    selected = top_candidates[:actual_n]  # final strip selection
+    selected = top_candidates[:actual_n]
 
     # ------------------------------------------------------------------
-    # Step 3 continued — Build NoteEvents for each selected strip.
+    # Build NoteEvents for each selected strip.
     # ------------------------------------------------------------------
     notes: List[NoteEvent] = []
 
     for strip_brightness, i in selected:
-
-        # Pan: map strip position linearly from -1 (left) to +1 (right).
-        # Stereo position encodes spatial location; left-to-right mirrors
-        # a "time axis" across the frame width.
         if n_strips > 1:
             pan: float = (i / (n_strips - 1)) * 2.0 - 1.0
         else:
-            pan = 0.0  # single-strip frame → centre
+            pan = 0.0
 
-        # Pitch: quantize the strip's height feature to the chosen scale.
-        # Higher column_height → higher register → taller/denser features
-        # sound higher-pitched.
         height: float = float(column_heights[i])
         pitch: int = quantize(height, scale_name)
 
-        # Velocity: combine overall frame brightness with the strip's own
-        # brightness.  This keeps loud frames louder without clipping quiet
-        # strips entirely.  Clamp to valid MIDI range [1, 127].
         raw_velocity: float = strip_brightness * brightness * 127.0
         velocity: int = int(max(1.0, min(127.0, raw_velocity)))
-
-        # Duration: higher features ring slightly longer (a taller canopy,
-        # a brighter city-light cluster) — produces a natural sustain
-        # relationship between height and note length.
         duration: float = frame_duration * (0.3 + height * 0.5)
 
-        # Instrument family: hue selects the timbre.
-        # Warm hues (orange/red/magenta) → strings/bells
-        # Cool hues (cyan/blue/indigo)   → soft pads
-        # Neutral/green                  → blend (marimba default)
-        instrument: str = hue_to_instrument(float(column_hues[i]))
-
-        # Channel assignment: spread voices across MIDI channels 0–15 by
-        # instrument family so the renderer can apply per-channel effects.
+        # Use effective hue (frame hue if strip < 0.05)
+        strip_hue = effective_strip_hues[i]
+        instrument: str = hue_to_instrument(strip_hue)
         channel: int = _instrument_to_channel(instrument)
 
-        # Assemble the note (time is the frame timestamp; the render loop
-        # will add any global track offset on top of this)
         note = NoteEvent(
             time=t,
             duration=duration,
@@ -235,73 +253,60 @@ def frame_to_notes(
             pan=pan,
             instrument=instrument,
             channel=channel,
+            source_strip=i,
+            column_height=height,
         )
 
-        # ------------------------------------------------------------------
-        # Step 4 — Record-specific adjustments.
-        # Each record has a distinct acoustic personality that reflects the
-        # character of the underlying NASA dataset.
-        # ------------------------------------------------------------------
-
         if record == "night_lights":
-            # Night Lights: city clusters → add a sustaining chord-pad note
-            # one octave below when the frame is richly saturated (colorful
-            # city glow).  This fills the low register and gives depth.
             if saturation > 0.4:
                 pad_pitch: int = max(0, pitch - 12)  # one octave down
                 pad_note = NoteEvent(
                     time=t,
-                    duration=duration * 1.5,  # pad rings longer than melody
+                    duration=duration * 1.5,
                     pitch=pad_pitch,
-                    velocity=max(1, int(velocity * 0.6)),  # softer
+                    velocity=max(1, int(velocity * 0.6)),
                     pan=pan,
                     instrument="soft_pad",
                     channel=_instrument_to_channel("soft_pad"),
+                    source_strip=i,
+                    column_height=height,
                 )
                 notes.append(pad_note)
 
         elif record == "ocean_currents":
-            # Ocean Currents: slow, overlapping swells.
-            # High-motion areas (turbulent current, eddies) are skipped to
-            # keep the texture smooth — turbulence → silence / space.
             if motion > 0.7:
-                continue  # skip this strip in high-motion frames
-            # Extend duration × 3: ocean features evolve slowly
+                continue
             note = NoteEvent(
                 time=t,
                 duration=duration * 3.0,
                 pitch=pitch,
-                velocity=max(1, int(velocity * 0.7)),  # 30 % quieter
+                velocity=max(1, int(velocity * 0.7)),
                 pan=pan,
                 instrument=instrument,
                 channel=channel,
+                source_strip=i,
+                column_height=height,
             )
 
         elif record == "gedi_forest":
-            # GEDI Forest: LiDAR canopy-height data → melodic line.
-            # column_heights (canopy height 0–1) maps directly to pitch,
-            # preserving the melodic contour of the forest profile.
-            # Pitch already computed above from column_heights — that is
-            # the correct mapping, so no change needed for melody note.
-            # Additionally, add a soft sustain pad when saturation is high
-            # (dense, lush canopy → richer harmonic bed).
             if saturation > 0.5:
                 pad_note = NoteEvent(
                     time=t,
                     duration=duration * 2.0,
-                    pitch=max(0, pitch - 7),    # a fifth below for warmth
+                    pitch=max(0, pitch - 7),
                     velocity=max(1, int(velocity * 0.5)),
                     pan=pan,
                     instrument="soft_pad",
                     channel=_instrument_to_channel("soft_pad"),
+                    source_strip=i,
+                    column_height=height,
                 )
                 notes.append(pad_note)
 
-        # (lightning gate is already handled above — no per-strip adjustment needed)
-
         notes.append(note)
 
-    return notes
+    # Enforce check 5: Maximum simultaneous notes is at most 4 (or max_notes)
+    return notes[:max_notes]
 
 
 # ---------------------------------------------------------------------------

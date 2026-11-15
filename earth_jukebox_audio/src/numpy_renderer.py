@@ -18,6 +18,41 @@ from scipy.io import wavfile
 # ADSR Envelope
 # ---------------------------------------------------------------------------
 
+def mix_into(buffer: np.ndarray, signal: np.ndarray, start_sample: int) -> int:
+    """
+    Mix (add) signal into buffer starting at start_sample.
+    Clamps start_sample to >= 0.
+    Computes n = min(len(signal), len(buffer) - start_sample).
+    Returns n (samples added). If n <= 0, returns 0 without modifying buffer.
+    Adds only signal[:n]. Applies to both channels for stereo.
+    """
+    start = int(max(0, start_sample))
+    buf_len = buffer.shape[-1]
+    sig_len = signal.shape[-1]
+
+    if start >= buf_len:
+        return 0
+
+    n = min(sig_len, buf_len - start)
+    if n <= 0:
+        return 0
+
+    if buffer.ndim == 1:
+        if signal.ndim == 1:
+            buffer[start : start + n] += signal[:n]
+        else:
+            buffer[start : start + n] += signal[0, :n]
+    elif buffer.ndim == 2:
+        if signal.ndim == 1:
+            buffer[0, start : start + n] += signal[:n]
+            buffer[1, start : start + n] += signal[:n]
+        elif signal.ndim == 2:
+            buffer[0, start : start + n] += signal[0, :n]
+            buffer[1, start : start + n] += signal[1, :n]
+
+    return n
+
+
 def adsr_envelope(
     n_samples: int,
     sample_rate: int,
@@ -25,7 +60,7 @@ def adsr_envelope(
     decay: float,
     sustain_level: float,
     release: float,
-    total_duration: float,
+    total_duration: float = 0.0,
 ) -> np.ndarray:
     """
     Shapes volume over time so notes don't click on/off abruptly.
@@ -35,26 +70,31 @@ def adsr_envelope(
     Sustain : hold at sustain_level for the body of the note
     Release : ramp from sustain_level → 0 at the note's tail
 
-    Returns a float64 array of length n_samples in [0, 1].
+    Returns a float32 array of length n_samples in [0, 1].
     """
-    envelope = np.zeros(n_samples)
+    if n_samples <= 0:
+        return np.zeros(0, dtype=np.float32)
 
-    # Convert time sections to sample counts; clamp so they fit in n_samples
-    attack_samples  = min(int(attack  * sample_rate), n_samples)
-    decay_samples   = min(int(decay   * sample_rate), n_samples - attack_samples)
-    release_samples = min(int(release * sample_rate), n_samples)
-    sustain_samples = max(0, n_samples - attack_samples - decay_samples - release_samples)
+    envelope = np.zeros(n_samples, dtype=np.float32)
+
+    # Convert time sections to sample counts; clamp sequentially so they fit in n_samples
+    attack_samples = max(0, min(int(attack * sample_rate), n_samples))
+    rem = n_samples - attack_samples
+    decay_samples = max(0, min(int(decay * sample_rate), rem))
+    rem -= decay_samples
+    release_samples = max(0, min(int(release * sample_rate), rem))
+    sustain_samples = max(0, rem - release_samples)
 
     idx = 0
 
     # --- Attack: linear ramp 0 → 1
     if attack_samples > 0:
-        envelope[idx : idx + attack_samples] = np.linspace(0.0, 1.0, attack_samples)
+        envelope[idx : idx + attack_samples] = np.linspace(0.0, 1.0, attack_samples, dtype=np.float32)
         idx += attack_samples
 
     # --- Decay: linear ramp 1 → sustain_level
     if decay_samples > 0:
-        envelope[idx : idx + decay_samples] = np.linspace(1.0, sustain_level, decay_samples)
+        envelope[idx : idx + decay_samples] = np.linspace(1.0, sustain_level, decay_samples, dtype=np.float32)
         idx += decay_samples
 
     # --- Sustain: hold at sustain_level
@@ -64,12 +104,10 @@ def adsr_envelope(
 
     # --- Release: linear ramp sustain_level → 0
     if release_samples > 0:
-        envelope[idx : idx + release_samples] = np.linspace(sustain_level, 0.0, release_samples)
-        idx += release_samples
-
-    # Fill any rounding remainder with 0
-    if idx < n_samples:
-        envelope[idx:] = 0.0
+        actual_rel = min(release_samples, n_samples - idx)
+        if actual_rel > 0:
+            envelope[idx : idx + actual_rel] = np.linspace(sustain_level, 0.0, actual_rel, dtype=np.float32)
+            idx += actual_rel
 
     return envelope
 
@@ -313,7 +351,7 @@ def render_to_array(
     ----------
     note_events     : list of NoteEvent (duck-typed — needs .time, .pitch,
                       .duration, .velocity, .instrument, .pan attributes)
-    total_duration  : length of the output in seconds
+    total_duration  : length of the output in seconds (frames / fps)
     sample_rate     : audio sample rate (default 44100 Hz)
     reverb_amount   : wet/dry mix for reverb (0 = dry, 1 = fully wet)
     seed            : random seed for reproducibility
@@ -326,9 +364,15 @@ def render_to_array(
     # Fix random seed for reproducibility across runs
     np.random.seed(seed)
 
-    # Allocate the stereo output buffer (2 channels × total samples)
-    total_samples = int(total_duration * sample_rate)
-    buffer = np.zeros((2, total_samples), dtype=np.float32)
+    # Allocate the buffer with an extra 3 seconds after the last frame so reverb
+    # tails and long notes are not cut off.
+    extra_tail_sec = 3.0
+    nominal_samples = int(total_duration * sample_rate)
+    alloc_samples = int((total_duration + extra_tail_sec) * sample_rate)
+    buffer = np.zeros((2, alloc_samples), dtype=np.float32)
+
+    skipped_notes = 0
+    truncated_notes = 0
 
     for note in note_events:
         # --- Derive per-note parameters ---
@@ -337,38 +381,67 @@ def render_to_array(
         pan          = float(getattr(note, "pan", 0.0))        # stereo position (-1 … +1)
         instrument   = str(getattr(note, "instrument", ""))    # waveform family
         duration     = float(note.duration)                    # note length in seconds
-        start_sample = int(float(note.time) * sample_rate)     # timeline offset in samples
 
-        # Clamp start to valid range
-        if start_sample >= total_samples:
+        # Convert all start positions to int sample indices
+        start_sample = int(round(float(note.time) * sample_rate))
+
+        if start_sample >= alloc_samples or start_sample < 0:
+            skipped_notes += 1
             continue
 
-        # Number of samples for this note (may be truncated by buffer end)
-        n_note_samples = min(int(duration * sample_rate), total_samples - start_sample)
-        if n_note_samples <= 0:
+        desired_samples = int(round(duration * sample_rate))
+        if desired_samples <= 0:
+            skipped_notes += 1
             continue
 
         # Synthesise the mono note signal (waveform + ADSR + velocity)
         mono_note = _synthesise_note(
-            frequency, n_note_samples, sample_rate, instrument, velocity_gain
+            frequency, desired_samples, sample_rate, instrument, velocity_gain
         )
 
         # Pan to stereo using equal-power law
-        stereo_note = _pan_stereo(mono_note, pan)  # shape (2, n_note_samples)
+        stereo_note = _pan_stereo(mono_note, pan)  # shape (2, desired_samples)
 
-        # Mix (add) the note into the output buffer at the correct time offset
-        end_sample = start_sample + n_note_samples
-        buffer[:, start_sample:end_sample] += stereo_note
+        # Mix (add) using the shared mix_into helper
+        mixed_n = mix_into(buffer, stereo_note, start_sample)
+        if mixed_n < desired_samples:
+            truncated_notes += 1
 
-    # Apply Schroeder reverb to the full mixed buffer
+    # Store stats on render module for diagnostics
+    render_to_array.last_skipped = skipped_notes
+    render_to_array.last_truncated = truncated_notes
+
+    # Apply Schroeder reverb to the full mixed buffer (including tail)
     buffer = apply_reverb(buffer, sample_rate, reverb_amount)
+
+    # Trim trailing silence while keeping final duration equal to number of frames / fps (plus at most tail)
+    mag = np.max(np.abs(buffer), axis=0)
+    # Threshold for silence detection in tail
+    active_indices = np.where(mag > 0.005)[0]
+    last_active = active_indices[-1] if len(active_indices) > 0 else nominal_samples
+
+    # Keep at least nominal duration, and at most nominal + 0.8s tail (so duration stays within 1s of len(frames)/fps)
+    max_tail_samples = int(0.8 * sample_rate)
+    if last_active > nominal_samples:
+        cutoff = min(last_active + int(0.1 * sample_rate), nominal_samples + max_tail_samples)
+    else:
+        cutoff = nominal_samples
+    cutoff = min(cutoff, alloc_samples)
+
+    # Apply short fade-out at the very end of the cut to prevent any click
+    fade_len = min(int(0.05 * sample_rate), cutoff)
+    if fade_len > 0:
+        fade = np.linspace(1.0, 0.0, fade_len, dtype=np.float32)
+        buffer[:, cutoff - fade_len : cutoff] *= fade
+
+    # Trim to final cutoff
+    buffer = buffer[:, :cutoff]
 
     # Normalise: bring peak to ≤ 0.95 to prevent digital clipping.
     # Skip if the signal is completely silent (avoids divide-by-zero).
     peak = np.max(np.abs(buffer))
     if peak > 0.95:
-        buffer /= peak  # scale so the loudest sample is exactly 0.95 ... 1.0
-        buffer *= 0.95  # pull back to exactly 0.95 headroom
+        buffer = (buffer / peak) * 0.95
 
     return buffer
 

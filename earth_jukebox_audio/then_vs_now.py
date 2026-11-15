@@ -44,9 +44,21 @@ from src.mapping import NoteEvent
 # renderer is unavailable.
 try:
     from src import numpy_renderer
+    from src.numpy_renderer import mix_into
     _NUMPY_RENDERER_AVAILABLE = True
 except ImportError:
     _NUMPY_RENDERER_AVAILABLE = False
+    def mix_into(buffer: np.ndarray, signal: np.ndarray, start_sample: int) -> int:
+        start = int(max(0, start_sample))
+        buf_len = buffer.shape[-1]
+        sig_len = signal.shape[-1]
+        if start >= buf_len:
+            return 0
+        n = min(sig_len, buf_len - start)
+        if n <= 0:
+            return 0
+        buffer[..., start : start + n] += signal[..., :n]
+        return n
 
 try:
     from src import fluidsynth_renderer
@@ -483,22 +495,12 @@ def _combine_stereo(signal_a: np.ndarray, signal_b: np.ndarray) -> np.ndarray:
 
     len_a = stereo_a.shape[1]
     len_b = stereo_b.shape[1]
+    out_len = max(len_a, len_b)
 
-    # Pad to equal length with zeros (silence).
-    if len_a < len_b:
-        pad = np.zeros((2, len_b - len_a), dtype=np.float32)
-        stereo_a = np.concatenate([stereo_a, pad], axis=1)
-    elif len_b < len_a:
-        pad = np.zeros((2, len_a - len_b), dtype=np.float32)
-        stereo_b = np.concatenate([stereo_b, pad], axis=1)
-
-    # Build output: left channel from A, right channel from B.
-    # This gives the listener A on the left ear and B on the right ear,
-    # making the temporal comparison immediately perceptible.
-    combined = np.stack([
-        stereo_a[0],   # LEFT  = A's left channel
-        stereo_b[1],   # RIGHT = B's right channel
-    ], axis=0)
+    # Use shared mix_into helper for channel mixing
+    combined = np.zeros((2, out_len), dtype=np.float32)
+    mix_into(combined[0:1], stereo_a[0:1], 0)
+    mix_into(combined[1:2], stereo_b[1:2], 0)
 
     return combined
 

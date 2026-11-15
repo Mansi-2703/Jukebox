@@ -98,6 +98,8 @@ def _render_file(
     input_path: str,
     out_path: str,
     backend_arg: str,
+    max_frames: int | None = None,
+    log_path: str | None = None,
 ) -> dict:
     """
     Run the full render pipeline for one input file.
@@ -114,36 +116,72 @@ def _render_file(
     scale_name: str = config.get("scale", "C_major_pentatonic")
 
     # Step 3 — Convert each frame to NoteEvents.
-    # frame_duration is set to 1.0 s by default; a real pipeline would
-    # derive this from tempo_bpm or explicit timestamps in the data.
     all_events: list[NoteEvent] = []
     frames = data["frames"]
-    frame_duration = 1.0  # seconds per frame (spec default)
+    if max_frames is not None and max_frames > 0:
+        frames = frames[:max_frames]
+
+    fps = float(data.get("fps", 1.0))
+    frame_duration = 1.0 / fps if fps > 0 else 1.0
 
     # Track whether column_heights / column_hues were present in the raw data
-    # (before loader applied defaults) — used by --check.
     has_column_heights = any("column_heights" in f for f in frames)
     has_column_hues = any("column_hues" in f for f in frames)
 
-    for frame in frames:
+    # Identify constant strips and zero strips across frames
+    zero_strips, constant_strips = mapping.find_strip_properties(frames)
+
+    for idx, frame in enumerate(frames):
         notes = mapping.frame_to_notes(
             frame,
             frame_duration=frame_duration,
             config=config,
             scale_name=scale_name,
+            constant_strips=constant_strips,
+            is_retrigger=(idx > 0),
         )
         all_events.extend(notes)
-
-    # Step 4 is implicit: all_events now contains NoteEvents across all frames.
 
     # Step 5 — Smooth velocities across the whole track to avoid jarring jumps.
     if all_events:
         raw_velocities = [float(n.velocity) for n in all_events]
         smoothed = mapping.smooth_volume(raw_velocities)
-        # Apply smoothed velocities back to the events (in-place mutation is fine
-        # since NoteEvent is a plain dataclass).
         for event, v in zip(all_events, smoothed):
             event.velocity = int(max(1, min(127, round(v))))
+
+    # Write debug notes log if requested
+    if log_path:
+        import json
+        log_dir = os.path.dirname(os.path.abspath(log_path))
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+        log_data = {
+            "record": data["record"],
+            "scale": scale_name,
+            "fps": fps,
+            "n_frames": len(frames),
+            "n_strips": len(frames[0]["columns"]) if frames else 0,
+            "zero_strips": sorted(list(zero_strips)),
+            "constant_strips": sorted(list(constant_strips)),
+            "notes": [
+                {
+                    "time": round(float(n.time), 4),
+                    "duration": round(float(n.duration), 4),
+                    "pitch": int(n.pitch),
+                    "velocity": int(n.velocity),
+                    "pan": round(float(n.pan), 4),
+                    "source_strip": int(getattr(n, "source_strip", -1)),
+                    "column_height": round(float(getattr(n, "column_height", 0.5)), 4),
+                    "instrument": str(getattr(n, "instrument", "")),
+                }
+                for n in all_events
+            ],
+            "frame_hues_used": [
+                f.get("effective_strip_hues", []) for f in frames
+            ],
+        }
+        with open(log_path, "w", encoding="utf-8") as f:
+            json.dump(log_data, f, indent=2)
 
     # Step 6 — Determine which backend to use.
     backend_name, renderer = _choose_backend(backend_arg)
@@ -360,6 +398,23 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Audio renderer to use. 'auto' tries FluidSynth then falls back to numpy.",
     )
 
+    # Log path for note events
+    parser.add_argument(
+        "--log",
+        metavar="PATH",
+        default=None,
+        help="Optional debug log JSON path to write all note events.",
+    )
+
+    # Max frames to render
+    parser.add_argument(
+        "--max-frames",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Only render the first N frames.",
+    )
+
     # Data and output directory overrides.
     parser.add_argument(
         "--data-dir",
@@ -405,7 +460,13 @@ def main() -> None:
         out_path = os.path.join(args.out_dir, f"{stem}.mp3")
 
     try:
-        stats = _render_file(args.input, out_path, args.backend)
+        stats = _render_file(
+            args.input,
+            out_path,
+            args.backend,
+            max_frames=args.max_frames,
+            log_path=args.log,
+        )
     except ValueError as exc:
         sys.exit(f"Error: {exc}")
 

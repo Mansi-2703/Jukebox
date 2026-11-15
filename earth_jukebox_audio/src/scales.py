@@ -56,6 +56,11 @@ SCALES: dict = {
 }
 
 
+def scale_notes(scale_name: str) -> list[int]:
+    """Return the list of MIDI note numbers for the given scale name."""
+    return SCALES.get(scale_name, SCALES["C_major_pentatonic"])
+
+
 # ---------------------------------------------------------------------------
 # quantize — map a 0–1 value to a MIDI note number
 # ---------------------------------------------------------------------------
