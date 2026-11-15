@@ -954,8 +954,9 @@ async function loadRecord(record) {
   // Mount video pipeline for curated NASA observation
   if (record.video) {
     byoVideo.hidden = false;
-    byoVideo.src = record.video;
     byoVideo.muted = true;
+    byoVideo.defaultMuted = true;
+    byoVideo.src = record.video;
     byoVideo.currentTime = 0;
     byoVideo.load();
     state.customViewMode = "overlay";
@@ -1534,7 +1535,7 @@ function buildShelf() {
           loop
           playsinline
           autoplay
-          preload="metadata"
+          preload="auto"
           onerror="if(!this.dataset.retried){this.dataset.retried='1'; this.src = this.getAttribute('src').startsWith('../') ? this.getAttribute('src').slice(3) : ('../' + this.getAttribute('src'));} else { this.style.display='none'; const fallback = this.parentElement.querySelector('img'); if(fallback) fallback.style.display='block'; }"
         ></video>
         <img
@@ -1576,11 +1577,21 @@ function buildShelf() {
     // Ensure card video plays continuously
     const cardVideo = card.querySelector("video");
     if (cardVideo) {
-      cardVideo.play().catch(() => {});
+      cardVideo.muted = true;
+      cardVideo.defaultMuted = true;
+      const tryPlay = () => {
+        if (cardVideo.paused) {
+          cardVideo.play().catch(() => {});
+        }
+      };
+      cardVideo.addEventListener("loadeddata", tryPlay, { once: true });
+      cardVideo.addEventListener("canplay", tryPlay, { once: true });
+      tryPlay();
     }
     card.addEventListener("mouseenter", () => {
-      if (cardVideo && cardVideo.paused) {
-        cardVideo.play().catch(() => {});
+      if (cardVideo) {
+        cardVideo.muted = true;
+        if (cardVideo.paused) cardVideo.play().catch(() => {});
       }
     });
 
