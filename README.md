@@ -78,19 +78,6 @@ earth-jukebox/
     └── credits.md          # NASA SVS attribution & scientific licenses
 ```
 
----
-
-## 2-Minute Demo Video Recording Guide
-
-When recording the submission demo video:
-1. **0:00–0:25 — Concept & Console Overview**: Introduce Earth Jukebox as a planet record collection. Show the 4 curated records on the shelf. Mount **Night Lights** and hit `Space` to initiate playback. Point out the glowing needle sweep across the spectrogram, binaural panning (left to right), and the HUD telemetry.
-2. **0:25–0:50 — Then vs Now Mode**: Press `T` or click **THEN VS NOW**. Show the dual-epoch stacked visualizer (2012 Baseline vs 2023 Delta) and explain how urban growth becomes audible as rich harmonic chords, while decline sounds as dissonant tension.
-3. **0:50–1:15 — Touch the Earth Probe**: Press `P` or click **PROBE**. Hover across latitudes on the visualizer to show coordinate pitch readout in Hz and trigger localized acoustic probing for sight-impaired exploration.
-4. **1:15–1:45 — Bring Your Own Earth**: Drag and drop any custom NASA video onto the 5th record sleeve. Show real-time browser frame extraction (`features.js`), live Web Audio synthesis (`synth.js`), and cycle through HUD view modes (`OVERLAY` → `VIDEO` → `SPECTROGRAM`).
-5. **1:45–2:00 — Accessibility & Closing**: Press `?` to open the console hardware key reference. Conclude on how multisensory sonification makes NASA Earth observation accessible to all audiences.
-
----
-
 ## Console Command Shortcuts
 
 | Key | Operation |
