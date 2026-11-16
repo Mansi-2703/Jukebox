@@ -1,4 +1,4 @@
-# Earth Jukebox: Planetary Observation Sonification Archive
+# TerrTone - Earth Jukebox: Planetary Observation Sonification Archive
 
 **NASA Space Apps 2026** — Planetary Earth Observation Data translated into acoustic spectrograms.  
 Each NASA visualization functions as a high-density sonification record. A precision coordinate needle sweeps chronologically from left to right, mapping spectral radiance and spatial features to an A-minor pentatonic acoustic continuum in real time.
